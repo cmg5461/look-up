@@ -191,9 +191,17 @@ async function main() {
     log(
       `Overhead: ${o.horizonDeg}° horizon, within ${o.maxGroundNm}nm ground` +
         `${o.cylinderNm > 0 ? `, plus a ${o.cylinderNm}nm cylinder` : ''}` +
-        ` (${o.maxSlantNm}nm max slant), ${o.lookaheadMinutes}min lookahead` +
-        ` but alerting inside T-${duration(o.alertWithinSec)},` +
+        ` (${o.maxSlantNm}nm max slant), ${o.lookaheadMinutes}min lookahead,` +
         ` scope=${o.scope}${o.only ? ', predicted passes only' : ''}.`,
+    );
+    // Alerts land only on a poll, so report the notice actually delivered
+    // rather than the threshold, which is always the optimistic end of it.
+    const low = Math.max(0, o.alertWithinSec - config.pollSeconds);
+    log(
+      `Warning: ${low > 0 ? `${duration(low)}-` : 'up to '}` +
+        `${duration(o.alertWithinSec)} before a predicted pass` +
+        ` (T-${duration(o.alertWithinSec)} threshold, ${config.pollSeconds}s poll).` +
+        ' Anything already overhead alerts at once.',
     );
     if (o.requireStraight) {
       log(

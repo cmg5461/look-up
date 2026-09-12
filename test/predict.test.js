@@ -152,7 +152,8 @@ test('aircraft without a position are ignored', () => {
 
 test('a projection further out than the alert window is watched, not alerted', () => {
   // 40nm at 450kt is about 5 minutes away - far enough that holding heading
-  // to within 4 degrees is an assumption, not an observation.
+  // to within 4 degrees is an assumption, not an observation, and far enough
+  // that an alert would mean "go and wait outside" rather than "go and look".
   const far = aircraftAt({ bearing: 225, distanceNm: 40, track: 45, altFt: 30000, speedKt: 450 });
   const r = predictOverhead(far, config, perfectFit(far));
   assert.ok(r.projected, 'the crossing is still predicted');
@@ -161,10 +162,35 @@ test('a projection further out than the alert window is watched, not alerted', (
 });
 
 test('the same aircraft becomes alertable once it is close enough', () => {
-  const near = aircraftAt({ bearing: 225, distanceNm: 10, track: 45, altFt: 30000, speedKt: 450 });
+  // 6nm at 450kt is about 48 seconds out: inside the window, and close enough
+  // that the alert means step outside now.
+  const near = aircraftAt({ bearing: 225, distanceNm: 6, track: 45, altFt: 30000, speedKt: 450 });
   const r = predictOverhead(near, config, perfectFit(near));
   assert.ok(r.projected.etaSec <= config.overhead.alertWithinSec);
   assert.equal(alertable(r, config), true);
+});
+
+test('the delivered notice never falls below one poll interval', () => {
+  // Alerts land only on a poll, so the ETA at the alerting poll lies in
+  // (alertWithinSec - pollSeconds, alertWithinSec]. Walk an aircraft in at
+  // one poll per step and check the first poll that would alert.
+  const { alertWithinSec } = config.overhead;
+  const speedKt = 450;
+  let noticeSec = null;
+  for (let distanceNm = 20; distanceNm > 0; distanceNm -= (speedKt / 3600) * config.pollSeconds) {
+    const a = aircraftAt({ bearing: 225, distanceNm, track: 45, altFt: 30000, speedKt });
+    const r = predictOverhead(a, config, perfectFit(a));
+    if (r?.projected && alertable(r, config)) {
+      noticeSec = r.projected.etaSec;
+      break;
+    }
+  }
+  assert.ok(noticeSec != null, 'it alerted at some poll rather than being stepped over');
+  assert.ok(
+    noticeSec > alertWithinSec - config.pollSeconds && noticeSec <= alertWithinSec,
+    `expected notice in (${alertWithinSec - config.pollSeconds}, ${alertWithinSec}], ` +
+      `got ${noticeSec?.toFixed(1)}s`,
+  );
 });
 
 test('the alert window never gates something already overhead', () => {

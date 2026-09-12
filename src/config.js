@@ -108,14 +108,25 @@ export const config = {
     minSpeedKt: num('OVERHEAD_MIN_SPEED_KT', 40),
 
     // How near a predicted pass must be before it is worth a notification.
-    // A projection is a claim that the aircraft holds its present course, and
-    // that claim decays with the distance it has to reach: at six minutes a
-    // 450kt jet must hold heading to within 3.8 degrees to still cross a 3nm
-    // bubble, while at two minutes it has 11.5 degrees of slack. Aircraft
-    // turning onto an approach break the first tolerance routinely and the
-    // second rarely, because by then they have usually already turned.
-    // Watching still begins at the full lookahead; only the push waits.
-    alertWithinSec: num('OVERHEAD_ALERT_WITHIN_SEC', 180),
+    //
+    // This is a claim about your attention, not about the sky. An alert at
+    // three minutes is an instruction to stop what you are doing and wait
+    // outside for two of them, which nobody does twice. The useful signal is
+    // "go and look now".
+    //
+    // Polling makes the delivered notice a band rather than a number. Alerts
+    // can only land on a poll, so the first poll that sees an ETA at or under
+    // this threshold gives notice somewhere in (alertWithinSec - pollSeconds,
+    // alertWithinSec] - had the ETA already been below the low end, the
+    // previous poll would have caught it. At 60s with a 30s poll that is 30
+    // to 60 seconds of warning, which is enough to get outside and no more.
+    //
+    // Waiting also buys accuracy for free, because a projection is only a
+    // claim that the aircraft holds its present course and that claim decays
+    // with range: at six minutes a 450kt jet must hold heading to within 3.8
+    // degrees to still cross a 3nm bubble, at one minute it has 23 degrees of
+    // slack. Watching still begins at the full lookahead; only the push waits.
+    alertWithinSec: num('OVERHEAD_ALERT_WITHIN_SEC', 60),
 
     // Extrapolating a turning or decelerating aircraft produces a confident
     // wrong answer, so fit its recent positions and check the fit first.
@@ -185,12 +196,16 @@ export function validate(cfg = config) {
       }
     }
     if (o.maxSlantNm <= 0) problems.push('OVERHEAD_MAX_SLANT_NM must be positive.');
-    // Below one poll there is no guarantee any poll ever catches the window,
-    // so the aircraft would pass in silence.
+    // An ETA falls by pollSeconds between polls, so a window narrower than one
+    // poll interval can be stepped clean over: the aircraft is "too far out"
+    // at one poll and already gone by the next, and never alerts at all.
+    // At or above one interval some poll must always see it.
     if (o.alertWithinSec < cfg.pollSeconds) {
       problems.push(
-        `OVERHEAD_ALERT_WITHIN_SEC (${o.alertWithinSec}) is under POLL_SECONDS ` +
-          `(${cfg.pollSeconds}), so a pass could slip between two polls unseen.`,
+        `OVERHEAD_ALERT_WITHIN_SEC (${o.alertWithinSec}s) is under POLL_SECONDS ` +
+          `(${cfg.pollSeconds}s): an ETA drops by a whole poll between checks, so ` +
+          'a pass could be too far out at one poll and over by the next. Raise it ' +
+          'to at least the poll interval, or poll faster.',
       );
     }
     if (o.stepSeconds <= 0) problems.push('OVERHEAD_STEP_SECONDS must be positive.');

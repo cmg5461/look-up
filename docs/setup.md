@@ -334,13 +334,25 @@ turning onto an approach misses that easily.
 Tighten the window in which a prediction is worth a notification:
 
 ```ini
-OVERHEAD_ALERT_WITHIN_SEC=120
+OVERHEAD_ALERT_WITHIN_SEC=60
 ```
 
 Prediction still runs to the full lookahead, so the log keeps showing what is
-coming as `(watching) DAL123 (T-4m12s)` — only the push waits. Watch a few of
-those lines and see whether they arrive; that tells you where to set it. It
-cannot go below `POLL_SECONDS`, or a pass could fall between two polls unseen.
+coming as `(watching) DAL123 (T-4m12s)` — only the push waits.
+
+**The number is not the notice.** Alerts land only on a poll, so what you
+actually get is a band: `(value − POLL_SECONDS, value]`. At `60` with a 30-second
+poll that is 30 to 60 seconds. The app prints the band it will deliver at
+startup, so you never have to work it out:
+
+```
+Warning: 30s-1m before a predicted pass (T-1m threshold, 30s poll).
+```
+
+Going lower than `POLL_SECONDS` is rejected: an ETA falls by a whole poll
+interval between checks, so a narrower window can be stepped over entirely —
+too far out at one poll, already gone by the next. If you want less warning
+than the band gives, poll faster instead.
 
 Something already overhead ignores this setting entirely — it has been
 observed, not predicted.

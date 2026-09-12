@@ -279,13 +279,38 @@ never that it will *stay* straight.
 
 So the two are separated. Prediction still runs out to the full lookahead and
 the log shows what is coming (`(watching) DAL123 (T-4m12s)`), but a push waits
-until the ETA falls inside `OVERHEAD_ALERT_WITHIN_SEC`. Raising it buys warning
-and costs precision; lowering it does the reverse, down to `POLL_SECONDS`,
-below which a pass can fall between two polls and never be seen at all.
+until the ETA falls inside `OVERHEAD_ALERT_WITHIN_SEC`.
 
-`insideBubble` is exempt. That is an observation rather than a prediction, so
-it has no shelf life — a helicopter hovering over your house alerts whatever
-its ETA, of which it has none.
+### How much warning that actually gives
+
+The threshold is not the notice. Alerts can only land on a poll, so the first
+poll that sees `ETA ≤ W` delivers notice somewhere in **`(W − P, W]`**, where
+`P` is `POLL_SECONDS` — had the ETA already been below `W − P`, the previous
+poll would have caught it. At the default `W=60, P=30` that is **30–60 seconds**,
+measured across the speed range:
+
+| Aircraft | Notice delivered |
+| --- | --- |
+| 80 kt helicopter at 700 ft | 45.5 s |
+| 250 kt at 5,000 ft | 53.2 s |
+| 450 kt at 30,000 ft | 56.3 s |
+| 600 kt at 35,000 ft | 42.2 s |
+
+That band is the design target, and it is a claim about attention rather than
+about the sky. Half a minute to a minute is enough to walk outside and look up.
+Three minutes is not a longer warning of the same kind — it is an instruction
+to stop what you are doing and then wait around, which nobody obeys twice.
+
+`W` cannot go below `P`. An ETA drops by a whole poll interval between checks,
+so a narrower window can be stepped clean over: too far out at one poll, gone
+by the next, never alerted. Config validation rejects it. To get a tighter or
+earlier band than `(W − P, W]` allows, poll faster rather than widening `W`.
+
+`insideBubble` is exempt from all of this. That is an observation rather than a
+prediction, so it has no shelf life — a helicopter hovering over your house
+alerts whatever its ETA, of which it has none. A live run caught a C-17 at
+6,500 ft this way: one poll it had no usable fit at all, the next it was
+1.5 nm out and alerting on `NOW`.
 
 **How selective is it?** A live run over one sky: 109 aircraft within 60 nm,
 **2** whose tracks actually crossed the cone.
@@ -523,7 +548,7 @@ Everything lives in `.env`. Blank means "no limit" for the numeric gates.
 | `OVERHEAD_CYLINDER_NM` | `1` | Everything within this distance horizontally counts, whatever its elevation. Catches low traffic the treeline hides. `0` disables. |
 | `OVERHEAD_MAX_SLANT_NM` | `25` | Beyond this it is an unresolvable dot. Rarely the binding constraint. |
 | `OVERHEAD_LOOKAHEAD_MIN` | `6` | How far ahead to project. More warning, less accuracy. |
-| `OVERHEAD_ALERT_WITHIN_SEC` | `180` | How near a predicted pass must be to earn a push. Watching still starts at the full lookahead; only the notification waits. |
+| `OVERHEAD_ALERT_WITHIN_SEC` | `60` | How near a predicted pass must be to earn a push. Delivered notice is `(value − POLL_SECONDS, value]`. Watching still starts at the full lookahead; only the notification waits. |
 | `OVERHEAD_STEP_SECONDS` | `5` | Simulation resolution. |
 | `OVERHEAD_MIN_SPEED_KT` | `40` | Ignore hovering or taxiing aircraft, which cannot be dead-reckoned. |
 | `OVERHEAD_SEARCH_NM` | `60` | Fetch radius. Must cover `~500kt × lookahead`, and validation enforces it. |
