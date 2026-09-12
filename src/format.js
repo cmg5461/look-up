@@ -45,22 +45,36 @@ function predictionLines(a) {
   const p = a.prediction;
   const lines = [];
 
-  lines.push(
-    p.alreadyInside
-      ? `In your sky NOW, for about ${duration(p.durationSec)} more.`
-      : `Enters your sky from the ${p.entryCompass} in ${duration(p.etaSec)}, ` +
+  if (p.alreadyInside) {
+    // With nothing extrapolated there is no honest claim to make about how
+    // long it will stay, so do not invent one.
+    lines.push(
+      p.durationSec == null
+        ? `In your sky NOW, ${round(p.peakElevationDeg)}° up to the ${p.entryCompass}.`
+        : `In your sky NOW, for about ${duration(p.durationSec)} more.`,
+    );
+  } else {
+    lines.push(
+      `Enters your sky from the ${p.entryCompass} in ${duration(p.etaSec)}, ` +
         `overhead for about ${duration(p.durationSec)}.`,
-  );
+    );
+  }
   if (p.belowHorizon) {
     lines.push(
       'Stays below your treeline - close enough to hear, probably not to see.',
     );
   }
-  lines.push(
-    `Peak ${round(p.peakElevationDeg)}° up` +
-      `${p.alreadyInside ? '' : ` at ${duration(p.peakSec)}`}` +
-      `, closest ${round(p.minSlantNm, 1)} nm.`,
-  );
+  if (p.extrapolated === false) {
+    lines.push(
+      `Hovering or no track reported - position is current, nothing projected.`,
+    );
+  } else {
+    lines.push(
+      `Peak ${round(p.peakElevationDeg)}° up` +
+        `${p.alreadyInside ? '' : ` at ${duration(p.peakSec)}`}` +
+        `, closest ${round(p.minSlantNm, 1)} nm.`,
+    );
+  }
 
   const vs =
     a.verticalRateFpm == null || Math.abs(a.verticalRateFpm) < 200
@@ -68,13 +82,20 @@ function predictionLines(a) {
       : a.verticalRateFpm > 0
         ? `climbing ${round(Math.abs(a.verticalRateFpm))} fpm`
         : `descending ${round(Math.abs(a.verticalRateFpm))} fpm`;
+  // Speed and track can both be absent - a hovering helicopter reports
+  // neither - so build this from whatever is actually known.
+  const motion = [
+    a.groundSpeedKt == null ? null : `${round(a.groundSpeedKt)} kt`,
+    a.track == null ? null : `on ${round(a.track)}°`,
+  ].filter(Boolean);
   lines.push(
-    `Now: ${round(a.distNm, 1)} nm ${a.compass}, ${round(a.altFt)} ft, ${vs}, ` +
-      `${round(a.groundSpeedKt)} kt on ${round(a.track)}°.`,
+    `Now: ${round(a.distNm, 1)} nm ${a.compass}, ${round(a.altFt)} ft, ${vs}` +
+      `${motion.length ? `, ${motion.join(' ')}` : ''}.`,
   );
 
-  // Dead reckoning assumes it holds this track. Say so when that is a stretch.
-  if (p.confidence !== 'high') {
+  // Dead reckoning assumes it holds this track. Say so when that is a stretch
+  // - but not when nothing was extrapolated in the first place.
+  if (p.extrapolated !== false && p.confidence !== 'high') {
     lines.push(
       `Projection assumes it holds course - ${p.confidence} confidence at this range.`,
     );

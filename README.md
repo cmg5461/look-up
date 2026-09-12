@@ -319,6 +319,27 @@ poll 4  trk  75  28nm  naive: -       | HELD (residual 0.0443)
 Aircraft with too little history return null — "not yet", not "fine" — so a
 newly-appeared contact waits rather than being trusted.
 
+**The gate does not apply to anything already overhead.** Extrapolation needs
+validating; observation does not. Something in your sky right now is a fact
+about the present, checked from its current position with no dead reckoning
+involved. Without that exemption an aircraft overhead during the warm-up would
+stay silent until it had gone — and a **helicopter orbiting above your house
+would never alert at all**, because orbiting means a high residual and the gate
+would suppress it forever.
+
+The same reasoning covers aircraft that cannot be projected in principle: a
+hovering helicopter reports no usable track or speed, so nothing can be
+extrapolated, but it is still overhead. Those alert with what is observably
+true and say plainly that nothing was projected:
+
+```
+OVERHEAD NOW - MILITARY PAT331 (SIKORSKY UH-60 Black Hawk)
+
+In your sky NOW, 53° up to the S.
+Hovering or no track reported - position is current, nothing projected.
+Now: 0.1 nm S, 800 ft, level.
+```
+
 **The cost is lead time.** Samples arrive one per poll, so 4 samples at
 `POLL_SECONDS=30` means about 90 seconds of watching before a newly-seen
 aircraft can alert. Config validation rejects a warm-up longer than the

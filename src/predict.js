@@ -60,6 +60,24 @@ export function bubbleRadiusNm(altFt, cfg) {
   return Math.min(Math.max(Math.min(cone, o.maxGroundNm), o.cylinderNm), slant);
 }
 
+/** Is this instantaneous look inside the bubble? */
+function inBubble(look, o) {
+  return (
+    look.slant <= o.maxSlantNm &&
+    (look.ground <= o.cylinderNm ||
+      (look.elevation >= o.horizonDeg && look.ground <= o.maxGroundNm))
+  );
+}
+
+/**
+ * Is the aircraft inside the bubble right now, judged from its current
+ * position alone? No extrapolation, so nothing to validate.
+ */
+export function isInsideBubble(a, cfg) {
+  if (a.lat == null || a.lon == null || a.altFt == null || a.altFt <= 0) return false;
+  return inBubble(look(cfg, a.lat, a.lon, a.altFt), cfg.overhead);
+}
+
 /** Where the aircraft sits relative to the observer at one instant. */
 function look(cfg, lat, lon, altFt) {
   const ground = distanceNm(cfg.lat, cfg.lon, lat, lon);
@@ -97,10 +115,7 @@ function scan(a, cfg, fromSec, toSec, stepSec) {
         : destination(a.lat, a.lon, a.track, travelled);
     const { ground, slant, elevation } = look(cfg, p.lat, p.lon, altFt);
 
-    const inside =
-      slant <= o.maxSlantNm &&
-      (ground <= o.cylinderNm ||
-        (elevation >= o.horizonDeg && ground <= o.maxGroundNm));
+    const inside = inBubble({ ground, slant, elevation }, o);
     if (inside) {
       if (entrySec === null) {
         entrySec = t;
@@ -140,12 +155,33 @@ function scan(a, cfg, fromSec, toSec, stepSec) {
 export function predictOverhead(a, cfg) {
   const o = cfg.overhead;
 
-  // Dead reckoning needs a heading and a speed. Anything parked, hovering,
-  // or reporting no track cannot be projected, and guessing would be worse
-  // than staying quiet.
   if (a.lat == null || a.lon == null || a.altFt == null || a.altFt <= 0) return null;
-  if (a.track == null) return null;
-  if (a.groundSpeedKt == null || a.groundSpeedKt < o.minSpeedKt) return null;
+
+  // Dead reckoning needs a heading and a speed. Anything hovering or
+  // reporting no track cannot be projected - but it can still be *overhead*,
+  // and a police helicopter holding station above your house is exactly the
+  // thing you want told about. Report what is observably true and make clear
+  // nothing was extrapolated.
+  const projectable =
+    a.track != null && a.groundSpeedKt != null && a.groundSpeedKt >= o.minSpeedKt;
+  if (!projectable) {
+    const now = look(cfg, a.lat, a.lon, a.altFt);
+    if (!inBubble(now, o)) return null;
+    return {
+      etaSec: 0,
+      exitSec: null,
+      durationSec: null,
+      peakElevationDeg: now.elevation,
+      peakSec: 0,
+      minSlantNm: now.slant,
+      entryBearing: bearingDeg(cfg.lat, cfg.lon, a.lat, a.lon),
+      entryCompass: compass(bearingDeg(cfg.lat, cfg.lon, a.lat, a.lon)),
+      alreadyInside: true,
+      belowHorizon: now.elevation < o.horizonDeg,
+      extrapolated: false,
+      confidence: 'observed',
+    };
+  }
 
   const horizonSec = o.lookaheadMinutes * 60;
 
@@ -181,6 +217,7 @@ export function predictOverhead(a, cfg) {
     entryBearing: fine.entryBearing,
     entryCompass: compass(fine.entryBearing),
     alreadyInside: fine.entrySec <= 0.5,
+    extrapolated: true,
     // It only qualified via the cylinder: close, but never clearing your
     // treeline. Worth saying plainly rather than sending you to stare at a
     // patch of sky with a hedge in front of it.

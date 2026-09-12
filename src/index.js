@@ -2,7 +2,7 @@
 import { config, validate } from './config.js';
 import { fetchNearby } from './sources.js';
 import { normalize, classify, flagReasons, enrich } from './rules.js';
-import { predictOverhead } from './predict.js';
+import { predictOverhead, isInsideBubble } from './predict.js';
 import { TrackHistory } from './history.js';
 import { TailDb } from './taildb.js';
 import { title, body, logLine } from './format.js';
@@ -94,12 +94,20 @@ async function poll(tracker, taildb, history) {
         const fit = config.overhead.requireStraight
           ? history.fit(a.hex, config)
           : null;
-        const usable = !config.overhead.requireStraight || Boolean(fit?.straight);
+        // Something already in your sky is a fact about the present, not a
+        // forecast - there is no extrapolation to validate, so the
+        // straightness gate does not apply to it. Without this, an aircraft
+        // overhead during the warm-up stays silent until it has gone, and a
+        // helicopter orbiting above you never alerts at all: orbiting means a
+        // high residual, which the gate would suppress forever.
+        const insideNow = isInsideBubble(a, config);
+        const usable =
+          insideNow || !config.overhead.requireStraight || Boolean(fit?.straight);
 
         // Project from the fitted velocity rather than the instantaneous
         // reported track: it averages out reporting jitter, and it is the
         // very motion the straightness check just validated.
-        const projectFrom = fit?.straight
+        const projectFrom = fit?.straight && !insideNow
           ? { ...a, track: fit.heading, groundSpeedKt: fit.speedKt }
           : a;
 

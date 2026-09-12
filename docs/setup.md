@@ -306,6 +306,11 @@ speed. For scale:
 | 0.0208 | straight but decelerating 450 → 300 kt |
 | 0.0752 | a standard-rate turn |
 
+This never delays an alert for something **already** overhead — that is checked
+from the current position, with nothing extrapolated, so there is nothing to
+validate. A hovering or orbiting helicopter above your house alerts immediately
+and says that nothing was projected.
+
 Raise the threshold to be more permissive, lower it to be stricter. To trade
 accuracy for warning, drop to `OVERHEAD_MIN_SAMPLES=3`; to turn the check off
 entirely, `OVERHEAD_REQUIRE_STRAIGHT=false`.
