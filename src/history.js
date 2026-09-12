@@ -1,5 +1,4 @@
-const toRad = (d) => (d * Math.PI) / 180;
-const toDeg = (r) => (r * 180) / Math.PI;
+import { distanceNm, toRad, toDeg, NM_PER_DEG } from './geo.js';
 
 /**
  * A rolling window of recent positions per aircraft, used to decide whether
@@ -17,8 +16,14 @@ export class TrackHistory {
   #byHex = new Map();
   #keep;
 
-  constructor({ keep = 8 } = {}) {
-    this.#keep = keep;
+  /**
+   * `fit` always uses exactly `minSamples` observations, so that is the window
+   * length. Retaining a couple extra absorbs a dropped poll without losing the
+   * window; deriving the cap from config rather than hardcoding it means
+   * raising OVERHEAD_MIN_SAMPLES cannot silently starve the fit.
+   */
+  constructor(cfg) {
+    this.#keep = Math.max(4, cfg.overhead.minSamples + 2);
   }
 
   /** Record one observation. Ignores aircraft without a usable fix. */
@@ -70,11 +75,11 @@ export class TrackHistory {
 
     // Flat-earth frame in nautical miles about the first sample. Over the few
     // miles a window covers, the error from ignoring curvature is negligible.
-    const kx = 60 * Math.cos(toRad(s[0].lat));
+    const kx = NM_PER_DEG * Math.cos(toRad(s[0].lat));
     const pts = s.map((p) => ({
       t: p.t - s[0].t,
       x: (p.lon - s[0].lon) * kx,
-      y: (p.lat - s[0].lat) * 60,
+      y: (p.lat - s[0].lat) * NM_PER_DEG,
     }));
 
     const n = pts.length;
@@ -105,26 +110,16 @@ export class TrackHistory {
     }
     const rmsNm = Math.sqrt(ss / n);
 
-    const travelledNm = Math.hypot(
-      pts[n - 1].x - pts[0].x,
-      pts[n - 1].y - pts[0].y,
-    );
+    const travelledNm = distanceNm(s[0].lat, s[0].lon, s[n - 1].lat, s[n - 1].lon);
     const residual = travelledNm > 0 ? rmsNm / travelledNm : 1;
 
     const speedKt = Math.hypot(vx, vy) * 3600;
     // Bearing from an (east, north) velocity vector.
     const heading = (toDeg(Math.atan2(vx, vy)) + 360) % 360;
 
-    return {
-      samples: n,
-      spanSec,
-      travelledNm,
-      rmsNm,
-      residual,
-      heading,
-      speedKt,
-      straight: residual <= o.maxPathResidual && speedKt >= o.minSpeedKt,
-    };
+    // Measurement only. Whether this is good enough to extrapolate from is a
+    // policy question, and it belongs with the code doing the extrapolating.
+    return { residual, heading, speedKt };
   }
 
   /** Forget aircraft not heard from in a while, to bound memory. */
@@ -133,9 +128,5 @@ export class TrackHistory {
     for (const [hex, samples] of this.#byHex) {
       if (samples[samples.length - 1].t < cutoff) this.#byHex.delete(hex);
     }
-  }
-
-  get size() {
-    return this.#byHex.size;
   }
 }

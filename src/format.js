@@ -21,10 +21,12 @@ export function describe(a) {
 }
 
 export function title(a, reasons) {
-  const p = a.prediction;
-  if (p) {
+  if (a.overhead) {
     // Lead with the thing you can act on: how long until you should look up.
-    const when = p.alreadyInside ? 'OVERHEAD NOW' : `OVERHEAD in ${duration(p.etaSec)}`;
+    const { now, projected } = a.overhead;
+    const when = now.insideBubble
+      ? 'OVERHEAD NOW'
+      : `OVERHEAD in ${duration(projected.etaSec)}`;
     const flags = reasons.filter((r) => r !== 'overhead');
     const what = flags.length ? `${flags.map((r) => REASONS[r].label).join(' + ')} ` : '';
     return `${when} - ${what}${describe(a)}`;
@@ -40,48 +42,48 @@ export function title(a, reasons) {
   return `${labels} - ${describe(a)} ${where}`;
 }
 
-/** The projected-pass block: where to look, when, and for how long. */
-function predictionLines(a) {
-  const p = a.prediction;
+/**
+ * Where to look, when, and for how long.
+ *
+ * `projected === null` means nothing was extrapolated - a hovering helicopter,
+ * or one with no track to reckon from. Branch on that once, here, rather than
+ * letting every line re-derive it from a null duration or a sentinel.
+ */
+function overheadLines(a) {
+  const { now, projected } = a.overhead;
   const lines = [];
 
-  if (p.alreadyInside) {
-    // With nothing extrapolated there is no honest claim to make about how
-    // long it will stay, so do not invent one.
+  if (now.insideBubble) {
     lines.push(
-      p.durationSec == null
-        ? `In your sky NOW, ${round(p.peakElevationDeg)}° up to the ${p.entryCompass}.`
-        : `In your sky NOW, for about ${duration(p.durationSec)} more.`,
+      projected
+        ? `In your sky NOW, for about ${duration(projected.durationSec)} more.`
+        : `In your sky NOW, ${round(now.elevationDeg)}° up to the ${now.compass}.`,
     );
   } else {
     lines.push(
-      `Enters your sky from the ${p.entryCompass} in ${duration(p.etaSec)}, ` +
-        `overhead for about ${duration(p.durationSec)}.`,
+      `Enters your sky from the ${projected.entryCompass} in ` +
+        `${duration(projected.etaSec)}, overhead for about ` +
+        `${duration(projected.durationSec)}.`,
     );
   }
-  if (p.belowHorizon) {
-    lines.push(
-      'Stays below your treeline - close enough to hear, probably not to see.',
-    );
+
+  if (projected ? projected.belowHorizon : now.belowHorizon) {
+    lines.push('Stays below your treeline - close enough to hear, probably not to see.');
   }
-  if (p.extrapolated === false) {
-    lines.push(
-      `Hovering or no track reported - position is current, nothing projected.`,
-    );
-  } else {
-    lines.push(
-      `Peak ${round(p.peakElevationDeg)}° up` +
-        `${p.alreadyInside ? '' : ` at ${duration(p.peakSec)}`}` +
-        `, closest ${round(p.minSlantNm, 1)} nm.`,
-    );
-  }
+
+  lines.push(
+    projected
+      ? `Peak ${round(projected.peakElevationDeg)}° up` +
+        `${now.insideBubble ? '' : ` at ${duration(projected.peakSec)}`}` +
+        `, closest ${round(projected.minSlantNm, 1)} nm.`
+      : 'Hovering or no track reported - position is current, nothing projected.',
+  );
 
   const vs =
     a.verticalRateFpm == null || Math.abs(a.verticalRateFpm) < 200
       ? 'level'
-      : a.verticalRateFpm > 0
-        ? `climbing ${round(Math.abs(a.verticalRateFpm))} fpm`
-        : `descending ${round(Math.abs(a.verticalRateFpm))} fpm`;
+      : `${a.verticalRateFpm > 0 ? 'climbing' : 'descending'} ` +
+        `${round(Math.abs(a.verticalRateFpm))} fpm`;
   // Speed and track can both be absent - a hovering helicopter reports
   // neither - so build this from whatever is actually known.
   const motion = [
@@ -89,15 +91,14 @@ function predictionLines(a) {
     a.track == null ? null : `on ${round(a.track)}°`,
   ].filter(Boolean);
   lines.push(
-    `Now: ${round(a.distNm, 1)} nm ${a.compass}, ${round(a.altFt)} ft, ${vs}` +
+    `Now: ${round(now.groundNm, 1)} nm ${now.compass}, ${round(a.altFt)} ft, ${vs}` +
       `${motion.length ? `, ${motion.join(' ')}` : ''}.`,
   );
 
-  // Dead reckoning assumes it holds this track. Say so when that is a stretch
-  // - but not when nothing was extrapolated in the first place.
-  if (p.extrapolated !== false && p.confidence !== 'high') {
+  // Dead reckoning assumes it holds course. Say so when that is a stretch.
+  if (projected && projected.confidence !== 'high') {
     lines.push(
-      `Projection assumes it holds course - ${p.confidence} confidence at this range.`,
+      `Projection assumes it holds course - ${projected.confidence} confidence at this range.`,
     );
   }
   return lines;
@@ -106,7 +107,7 @@ function predictionLines(a) {
 export function body(a, reasons) {
   const lines = [];
 
-  if (a.prediction) lines.push(...predictionLines(a), '');
+  if (a.overhead) lines.push(...overheadLines(a), '');
 
   if (!a.callsign && !reasons.includes('noCallsign')) {
     lines.push('No callsign broadcast.');
@@ -127,9 +128,9 @@ export function body(a, reasons) {
     lines.push(`Reg/tail: ${a.registration}${a.year ? ` (${a.year})` : ''}`);
   }
 
-  // With a prediction present, its "Now:" line already gives altitude, speed,
-  // distance and bearing - no need to state all of it twice.
-  if (!a.prediction) {
+  // With an overhead block present, its "Now:" line already gives altitude,
+  // speed, distance and bearing - no need to state all of it twice.
+  if (!a.overhead) {
     const altText =
       a.altFt == null
         ? 'altitude unknown'
@@ -172,8 +173,11 @@ export function body(a, reasons) {
 /** One-line summary for the console log. */
 export function logLine(a, reasons) {
   const tags = reasons.map((r) => REASONS[r].tag).join(',');
-  const eta = a.prediction
-    ? (a.prediction.alreadyInside ? 'NOW' : `T-${duration(a.prediction.etaSec)}`).padStart(7)
+  const eta = a.overhead
+    ? (a.overhead.now.insideBubble
+        ? 'NOW'
+        : `T-${duration(a.overhead.projected.etaSec)}`
+      ).padStart(7)
     : '       ';
   const dist = a.distNm == null ? '  ?  ' : `${a.distNm.toFixed(1).padStart(5)}nm`;
   const alt = a.altFt == null ? '     ?' : `${String(a.altFt).padStart(6)}ft`;

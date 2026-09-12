@@ -601,11 +601,13 @@ src/
   config.js    .env loading and validation
   sources.js   ADS-B fetch with failover
   rules.js     normalisation, classification, local enrichment
+  predict.js   the visibility bubble, and dead reckoning into it
+  history.js   rolling positions + the constant-velocity path fit
   tracker.js   repeat suppression, persisted to state.json
   taildb.js    local tail database: download, binary search, type index
   notify.js    ntfy and Pushover delivery
   format.js    alert titles and bodies
-  geo.js       distance, bearing, compass, elevation angle
+  geo.js       distance, bearing, destination, compass, elevation angle
   init.js      first-run setup: generates .env and a private topic
 data/          the tail database (gitignored, ~31MB)
 .env           your secrets and location (gitignored)

@@ -2,7 +2,7 @@
 import { config, validate } from './config.js';
 import { fetchNearby } from './sources.js';
 import { normalize, classify, flagReasons, enrich } from './rules.js';
-import { predictOverhead, isInsideBubble } from './predict.js';
+import { predictOverhead } from './predict.js';
 import { TrackHistory } from './history.js';
 import { TailDb } from './taildb.js';
 import { title, body, logLine } from './format.js';
@@ -83,52 +83,26 @@ async function poll(tracker, taildb, history) {
     const here = classify(a, config);
 
     if (config.overhead.enabled) {
-      // Ask "is this worth projecting?" from the flags alone - `classify`
-      // would have already discarded it for being outside the alert radius,
-      // which is exactly where interesting approaching traffic lives.
+      // Ask "is this worth looking at?" from the flags alone - `classify`
+      // would have discarded it for being outside the alert radius, which is
+      // exactly where interesting approaching traffic lives.
       const flagged = flagReasons(a, config);
       if (config.overhead.scope === 'all' || flagged.length) {
-        // Dead reckoning assumes constant velocity in a straight line, so
-        // check that assumption against the recent path before trusting it.
-        // A null fit means "not enough history yet" - a wait, not a pass.
-        const fit = config.overhead.requireStraight
-          ? history.fit(a.hex, config)
-          : null;
-        // Something already in your sky is a fact about the present, not a
-        // forecast - there is no extrapolation to validate, so the
-        // straightness gate does not apply to it. Without this, an aircraft
-        // overhead during the warm-up stays silent until it has gone, and a
-        // helicopter orbiting above you never alerts at all: orbiting means a
-        // high residual, which the gate would suppress forever.
-        const insideNow = isInsideBubble(a, config);
-        const usable =
-          insideNow || !config.overhead.requireStraight || Boolean(fit?.straight);
-
-        // Project from the fitted velocity rather than the instantaneous
-        // reported track: it averages out reporting jitter, and it is the
-        // very motion the straightness check just validated.
-        const projectFrom = fit?.straight && !insideNow
-          ? { ...a, track: fit.heading, groundSpeedKt: fit.speedKt }
-          : a;
-
-        const prediction = usable ? predictOverhead(projectFrom, config) : null;
-        if (prediction) {
-          a.fit = fit;
-          a.prediction = prediction;
+        const overhead = predictOverhead(
+          a,
+          config,
+          config.overhead.requireStraight ? history.fit(a.hex, config) : null,
+        );
+        if (overhead?.now.insideBubble || overhead?.projected) {
+          a.overhead = overhead;
           candidates.push({
             a: enrich(a, taildb),
             reasons: [...new Set([...flagged, 'overhead'])],
           });
           continue;
         }
-
-        // Worth a log line only if it would otherwise have been a candidate.
-        if (!usable && predictOverhead(a, config)) {
-          skipped.push(
-            `${a.callsign || a.hex} (${
-              fit === null ? 'warming up' : `path residual ${fit.residual.toFixed(3)}`
-            })`,
-          );
+        if (overhead?.held) {
+          skipped.push(`${a.callsign || a.hex} (${overhead.held})`);
         }
       }
     }
@@ -142,7 +116,7 @@ async function poll(tracker, taildb, history) {
   // Soonest first. A predicted pass is ranked by when it arrives; anything
   // merely nearby sorts after all of them, by distance.
   const rank = ({ a }) =>
-    a.prediction ? a.prediction.etaSec : 1e6 + (a.distNm ?? 1e5);
+    a.overhead?.projected ? a.overhead.projected.etaSec : 1e6 + (a.distNm ?? 1e5);
   candidates.sort((x, y) => rank(x) - rank(y));
 
   let alerted = 0;
@@ -193,7 +167,7 @@ async function main() {
 
   const taildb = await prepareTailDb();
   const tracker = new Tracker(config.statePath);
-  const history = new TrackHistory();
+  const history = new TrackHistory(config);
   const enabled = Object.entries(config.rules)
     .filter(([, on]) => on)
     .map(([k]) => k)

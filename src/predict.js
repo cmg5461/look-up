@@ -3,50 +3,39 @@ import {
   bearingDeg,
   compass,
   destination,
+  elevationDeg,
+  toRad,
   FT_PER_NM,
 } from './geo.js';
 
-const toRad = (d) => (d * Math.PI) / 180;
-const toDeg = (r) => (r * 180) / Math.PI;
-
 /**
- * The patch of sky you can actually pick an aircraft out of is bounded by
- * three separate things, and each one binds at a different altitude:
+ * The single definition of the patch of sky you can see, expressed as the
+ * ground radius in nautical miles at a given altitude. Three constraints
+ * bound it, and each binds at a different altitude:
  *
  *   1. Your horizon.   elevation >= horizonDeg. Trees, roofs and terrain cut
- *                      off the bottom of your sky. This is a property of where
- *                      you stand, not a preference - roughly 5-15 degrees in
+ *                      off the bottom of your sky. A property of where you
+ *                      stand, not a preference - roughly 5-15 degrees in
  *                      wooded suburbia, near 0 over open water, more in a
  *                      valley. It binds for LOW aircraft.
- *   2. "Overhead".     ground distance <= maxGroundNm. However high something
- *                      is, once it is far away horizontally it is not overhead.
- *                      This binds for HIGH aircraft.
- *   3. Resolvability.  slant range <= maxSlantNm. Past that it is a dot.
+ *   2. "Overhead".     ground <= maxGroundNm. However high something is, once
+ *                      it is far away horizontally it is not overhead. This
+ *                      binds for HIGH aircraft.
+ *   3. Resolvability.  slant <= maxSlantNm. Past that it is a dot.
  *
- * Plus a cylinder, unioned in: anything within cylinderNm of you horizontally
- * counts whatever its elevation. The cone alone says a helicopter at 400ft
- * beyond 0.37nm is behind the treeline and therefore invisible, which is true
- * of your eyes and irrelevant to your ears - it is still low, close and loud,
- * and it may well show through a gap. The cylinder only reaches below the
- * altitude where the cone is tighter than it is: at 10 degrees and 1nm, that
- * is everything under about 1,070ft. Above that the cone is already wider and
- * the cylinder changes nothing.
+ * Plus a cylinder, unioned in: anything within cylinderNm counts whatever its
+ * elevation. The cone is right about your eyes and wrong about your ears - a
+ * helicopter at 400ft beyond 0.37nm is behind the treeline, and still low,
+ * close and loud. The cylinder only reaches below the altitude where the cone
+ * is tighter than it is: at 10 degrees and 1nm, everything under ~1,070ft.
  *
- * A single elevation cone cannot do this job. At 45 degrees a helicopter at
- * 400ft would have to be within 0.066nm - 133 yards - while a jet at 30,000ft
- * got a 4.9nm window. That is backwards: the low, loud, close aircraft is the
- * one you are most likely to actually see, and it was the one being excluded.
+ *     altitude    cone only    with a 1nm cylinder
+ *       400 ft    0.37 nm      1.00 nm
+ *     1,000 ft    0.93 nm      1.00 nm
+ *     3,000 ft    2.80 nm      2.80 nm
+ *    30,000 ft    3.00 nm      3.00 nm   (capped by maxGroundNm)
  *
- * Splitting the floor from the preference fixes both ends:
- *
- *     altitude    old 45deg cone      horizon 10deg + 3nm cap
- *       400 ft    0.07 nm             0.37 nm
- *     1,000 ft    0.16 nm             0.93 nm
- *     3,000 ft    0.49 nm             2.80 nm
- *    10,000 ft    1.65 nm             3.00 nm
- *    30,000 ft    4.94 nm             3.00 nm
- *
- * Returns the ground radius in nm, or 0 if nothing at that altitude qualifies.
+ * Returns 0 when nothing at that altitude qualifies.
  */
 export function bubbleRadiusNm(altFt, cfg) {
   if (altFt == null || altFt <= 0) return 0;
@@ -54,47 +43,34 @@ export function bubbleRadiusNm(altFt, cfg) {
   const altNm = altFt / FT_PER_NM;
   if (altNm >= o.maxSlantNm) return 0; // too high to resolve even straight up
 
-  const cone = altNm / Math.tan(toRad(o.horizonDeg));
-  const slant = Math.sqrt(o.maxSlantNm * o.maxSlantNm - altNm * altNm);
-  // Union with the cylinder, then cap by what you could resolve at all.
-  return Math.min(Math.max(Math.min(cone, o.maxGroundNm), o.cylinderNm), slant);
+  const cone = Math.min(altNm / Math.tan(toRad(o.horizonDeg)), o.maxGroundNm);
+  const resolvable = Math.sqrt(o.maxSlantNm * o.maxSlantNm - altNm * altNm);
+  return Math.min(Math.max(cone, o.cylinderNm), resolvable);
 }
 
-/** Is this instantaneous look inside the bubble? */
-function inBubble(look, o) {
-  return (
-    look.slant <= o.maxSlantNm &&
-    (look.ground <= o.cylinderNm ||
-      (look.elevation >= o.horizonDeg && look.ground <= o.maxGroundNm))
-  );
-}
-
-/**
- * Is the aircraft inside the bubble right now, judged from its current
- * position alone? No extrapolation, so nothing to validate.
- */
-export function isInsideBubble(a, cfg) {
-  if (a.lat == null || a.lon == null || a.altFt == null || a.altFt <= 0) return false;
-  return inBubble(look(cfg, a.lat, a.lon, a.altFt), cfg.overhead);
-}
-
-/** Where the aircraft sits relative to the observer at one instant. */
+/** Where an aircraft sits relative to the observer at one instant. */
 function look(cfg, lat, lon, altFt) {
   const ground = distanceNm(cfg.lat, cfg.lon, lat, lon);
-  const altNm = altFt / FT_PER_NM;
   return {
+    altFt,
     ground,
-    slant: Math.hypot(ground, altNm),
-    elevation: toDeg(Math.atan2(altNm, ground)),
+    slant: Math.hypot(ground, altFt / FT_PER_NM),
+    elevation: elevationDeg(altFt, ground),
   };
 }
 
 /**
- * Walk the dead-reckoned track between two times and report the crossing, or
- * null if it never enters the bubble in that window.
+ * Membership, defined in terms of the radius rather than restating the
+ * geometry a second time. The radius is already clipped by the slant limit,
+ * so a ground distance inside it is inside every constraint.
+ */
+const inBubble = (l, cfg) => l.ground <= bubbleRadiusNm(l.altFt, cfg);
+
+/**
+ * Walk the dead-reckoned track between two times and report the crossing,
+ * or null if it never enters the bubble in that window.
  */
 function scan(a, cfg, fromSec, toSec, stepSec) {
-  const o = cfg.overhead;
   const vsFtPerSec = (a.verticalRateFpm ?? 0) / 60;
 
   let entrySec = null;
@@ -113,20 +89,19 @@ function scan(a, cfg, fromSec, toSec, stepSec) {
       travelled === 0
         ? { lat: a.lat, lon: a.lon }
         : destination(a.lat, a.lon, a.track, travelled);
-    const { ground, slant, elevation } = look(cfg, p.lat, p.lon, altFt);
+    const l = look(cfg, p.lat, p.lon, altFt);
 
-    const inside = inBubble({ ground, slant, elevation }, o);
-    if (inside) {
+    if (inBubble(l, cfg)) {
       if (entrySec === null) {
         entrySec = t;
         entryBearing = bearingDeg(cfg.lat, cfg.lon, p.lat, p.lon);
       }
       exitSec = t;
-      if (elevation > peakElevation) {
-        peakElevation = elevation;
+      if (l.elevation > peakElevation) {
+        peakElevation = l.elevation;
         peakSec = t;
       }
-      if (slant < minSlant) minSlant = slant;
+      if (l.slant < minSlant) minSlant = l.slant;
     } else if (entrySec !== null) {
       break; // it has passed through; one crossing is all we need
     }
@@ -137,63 +112,23 @@ function scan(a, cfg, fromSec, toSec, stepSec) {
 }
 
 /**
- * Dead-reckon an aircraft forward along its current ground track and report
- * whether it will pass through the visibility bubble.
+ * Dead-reckon forward and describe the crossing, or null if there is none.
  *
- * Stepping the path rather than solving it closed-form is deliberate: the
- * bubble's radius changes with altitude, so a climbing or descending aircraft
- * is chasing a moving target and there is no clean analytic answer.
- *
- * Two passes. A coarse one finds the crossing; a fine one re-walks just that
- * window to pin down peak elevation and closest approach. Without the second
- * pass a helicopter passing directly overhead reports its peak as whatever
- * angle the coarse samples happened to land on - 50 degrees rather than 90 -
- * which would send you looking at the wrong patch of sky.
- *
- * Returns null if it will not cross, or cannot be projected.
+ * Two passes. A coarse one finds the crossing, with its step shrunk to suit
+ * the bubble this aircraft could occupy - at 500kt and 400ft the whole
+ * crossing lasts about 5 seconds, which a fixed 5s step would skip clean over.
+ * A fine pass then re-walks just that window: without it a helicopter passing
+ * directly overhead reports its peak as whatever the coarse samples happened
+ * to land on, 50 degrees rather than 90, sending you to the wrong patch of sky.
  */
-export function predictOverhead(a, cfg) {
+function crossing(a, cfg) {
   const o = cfg.overhead;
-
-  if (a.lat == null || a.lon == null || a.altFt == null || a.altFt <= 0) return null;
-
-  // Dead reckoning needs a heading and a speed. Anything hovering or
-  // reporting no track cannot be projected - but it can still be *overhead*,
-  // and a police helicopter holding station above your house is exactly the
-  // thing you want told about. Report what is observably true and make clear
-  // nothing was extrapolated.
-  const projectable =
-    a.track != null && a.groundSpeedKt != null && a.groundSpeedKt >= o.minSpeedKt;
-  if (!projectable) {
-    const now = look(cfg, a.lat, a.lon, a.altFt);
-    if (!inBubble(now, o)) return null;
-    return {
-      etaSec: 0,
-      exitSec: null,
-      durationSec: null,
-      peakElevationDeg: now.elevation,
-      peakSec: 0,
-      minSlantNm: now.slant,
-      entryBearing: bearingDeg(cfg.lat, cfg.lon, a.lat, a.lon),
-      entryCompass: compass(bearingDeg(cfg.lat, cfg.lon, a.lat, a.lon)),
-      alreadyInside: true,
-      belowHorizon: now.elevation < o.horizonDeg,
-      extrapolated: false,
-      confidence: 'observed',
-    };
-  }
-
-  const horizonSec = o.lookaheadMinutes * 60;
-
-  // Low bubbles are small and fast movers cross them quickly: at 500kt and
-  // 400ft the whole crossing lasts about 5 seconds, which a fixed 5s step
-  // could skip entirely. Shrink the step so the narrowest bubble this
-  // aircraft could occupy still gets several samples.
   const radiusNow = bubbleRadiusNm(a.altFt, cfg);
-  const crossingSec = radiusNow > 0 ? (2 * radiusNow * 3600) / a.groundSpeedKt : Infinity;
+  const crossingSec =
+    radiusNow > 0 ? (2 * radiusNow * 3600) / a.groundSpeedKt : Infinity;
   const stepSec = Math.max(0.5, Math.min(o.stepSeconds, crossingSec / 4));
 
-  const coarse = scan(a, cfg, 0, horizonSec, stepSec);
+  const coarse = scan(a, cfg, 0, o.lookaheadMinutes * 60, stepSec);
   if (!coarse) return null;
 
   const windowSec = coarse.exitSec - coarse.entrySec + 2 * stepSec;
@@ -208,23 +143,80 @@ export function predictOverhead(a, cfg) {
 
   return {
     etaSec: fine.entrySec,
-    exitSec: fine.exitSec,
-    // A single sample inside still means a pass, just a brief one.
     durationSec: Math.max(fine.exitSec - fine.entrySec, 1),
     peakElevationDeg: fine.peakElevation,
     peakSec: fine.peakSec,
     minSlantNm: fine.minSlant,
     entryBearing: fine.entryBearing,
     entryCompass: compass(fine.entryBearing),
-    alreadyInside: fine.entrySec <= 0.5,
-    extrapolated: true,
-    // It only qualified via the cylinder: close, but never clearing your
-    // treeline. Worth saying plainly rather than sending you to stare at a
-    // patch of sky with a hedge in front of it.
     belowHorizon: fine.peakElevation < o.horizonDeg,
-    // Dead reckoning assumes the aircraft holds its current track. That is a
-    // decent bet for a jet in cruise and a poor one for something in the
-    // circuit, so callers should present distant predictions as provisional.
-    confidence: fine.entrySec <= 120 ? 'high' : fine.entrySec <= 300 ? 'moderate' : 'low',
+    // Dead reckoning assumes the aircraft holds course. A decent bet for a jet
+    // in cruise, a poor one for something in the circuit, so say how far the
+    // claim reaches.
+    confidence:
+      fine.entrySec <= 120 ? 'high' : fine.entrySec <= 300 ? 'moderate' : 'low',
   };
+}
+
+/**
+ * What this aircraft means for your patch of sky. Returns null if it means
+ * nothing, otherwise:
+ *
+ *   now        where it is, and whether that is already inside the bubble.
+ *              Observed, never extrapolated, so always trustworthy.
+ *   projected  the crossing its track implies, or null if none was computed.
+ *   held       why extrapolation was refused when it would otherwise have
+ *              produced a crossing: 'warming-up' or 'unsteady'.
+ *
+ * `projected === null` IS the statement that nothing was extrapolated. There
+ * is no separate flag to keep in step, and no caller has to infer it from a
+ * null duration or a sentinel confidence value.
+ *
+ * The straightness gate deliberately does not apply to `now`. Extrapolation
+ * needs validating; observation does not. Without that exemption an aircraft
+ * overhead during the warm-up stays silent until it has gone, and a helicopter
+ * orbiting above your house never alerts at all - orbiting means a high path
+ * residual, which would suppress it forever.
+ */
+export function predictOverhead(a, cfg, fit = null) {
+  const o = cfg.overhead;
+  if (a.lat == null || a.lon == null || a.altFt == null || a.altFt <= 0) return null;
+
+  const here = look(cfg, a.lat, a.lon, a.altFt);
+  const bearing = bearingDeg(cfg.lat, cfg.lon, a.lat, a.lon);
+  const now = {
+    insideBubble: inBubble(here, cfg),
+    groundNm: here.ground,
+    slantNm: here.slant,
+    elevationDeg: here.elevation,
+    bearing,
+    compass: compass(bearing),
+    belowHorizon: here.elevation < o.horizonDeg,
+  };
+
+  // Anything hovering, or reporting no track, cannot be dead-reckoned at all.
+  // It can still be overhead, which is the whole point of reporting `now`.
+  const projectable =
+    a.track != null && a.groundSpeedKt != null && a.groundSpeedKt >= o.minSpeedKt;
+
+  let projected = null;
+  let held = null;
+
+  if (projectable) {
+    // Trust the fitted velocity when the fit is good: it averages out
+    // reporting jitter, and it is the very motion the fit validated.
+    const trusted =
+      !o.requireStraight || (fit != null && fit.residual <= o.maxPathResidual);
+    const pass = crossing(
+      trusted && fit ? { ...a, track: fit.heading, groundSpeedKt: fit.speedKt } : a,
+      cfg,
+    );
+    if (pass) {
+      if (trusted) projected = pass;
+      else held = fit === null ? 'warming-up' : 'unsteady';
+    }
+  }
+
+  if (!now.insideBubble && !projected && !held) return null;
+  return { now, projected, held };
 }

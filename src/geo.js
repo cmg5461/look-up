@@ -2,8 +2,11 @@ export const FT_PER_NM = 6076.12;
 const POINTS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
                 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 
-const toRad = (d) => (d * Math.PI) / 180;
-const toDeg = (r) => (r * 180) / Math.PI;
+/** Nautical miles per degree of latitude (and of longitude at the equator). */
+export const NM_PER_DEG = 60;
+
+export const toRad = (d) => (d * Math.PI) / 180;
+export const toDeg = (r) => (r * 180) / Math.PI;
 
 /** Great-circle distance in nautical miles. */
 export function distanceNm(lat1, lon1, lat2, lon2) {
