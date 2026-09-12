@@ -3,6 +3,7 @@ import { config, validate } from './config.js';
 import { fetchNearby } from './sources.js';
 import { normalize, classify, flagReasons, enrich } from './rules.js';
 import { predictOverhead } from './predict.js';
+import { TrackHistory } from './history.js';
 import { TailDb } from './taildb.js';
 import { title, body, logLine } from './format.js';
 import { notify } from './notify.js';
@@ -62,7 +63,7 @@ async function prepareTailDb({ force = false } = {}) {
   return db.open() ? db : null;
 }
 
-async function poll(tracker, taildb) {
+async function poll(tracker, taildb, history) {
   // Dead reckoning needs a much wider net than the alert radius: an aircraft
   // that will be overhead in six minutes is a long way off right now.
   const searchNm = config.overhead.enabled
@@ -74,9 +75,11 @@ async function poll(tracker, taildb) {
   const overheadOnly = config.overhead.enabled && config.overhead.only;
 
   const candidates = [];
+  const skipped = [];
   for (const raw of aircraft) {
     if (!raw?.hex) continue;
     const a = normalize(raw, config);
+    history.record(a, now);
     const here = classify(a, config);
 
     if (config.overhead.enabled) {
@@ -87,12 +90,32 @@ async function poll(tracker, taildb) {
       if (config.overhead.scope === 'all' || flagged.length) {
         const prediction = predictOverhead(a, config);
         if (prediction) {
-          a.prediction = prediction;
-          candidates.push({
-            a: enrich(a, taildb),
-            reasons: [...new Set([...flagged, 'overhead'])],
-          });
-          continue;
+          // Extrapolation is only honest if the aircraft is actually flying
+          // straight. A jet halfway round a turn looks identical to one
+          // holding that heading, so check several polls before believing it.
+          // Null steadiness means "not enough history yet", which is a wait,
+          // not a pass - a later poll decides.
+          const steadiness = config.overhead.requireStraight
+            ? history.steadiness(a.hex, config)
+            : null;
+
+          if (!config.overhead.requireStraight || steadiness?.steady) {
+            a.steadiness = steadiness;
+            a.prediction = prediction;
+            candidates.push({
+              a: enrich(a, taildb),
+              reasons: [...new Set([...flagged, 'overhead'])],
+            });
+            continue;
+          }
+
+          skipped.push(
+            `${a.callsign || a.hex} (${
+              steadiness === null
+                ? 'warming up'
+                : `turning ${steadiness.turnRate.toFixed(2)}°/s`
+            })`,
+          );
         }
       }
     }
@@ -127,6 +150,11 @@ async function poll(tracker, taildb) {
 
   tracker.prune(config, now);
   tracker.save();
+  history.prune(now);
+
+  if (skipped.length) {
+    log(`  (unsteady) ${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? ` +${skipped.length - 5}` : ''}`);
+  }
 
   log(
     `${String(aircraft.length).padStart(3)} aircraft in ${searchNm}nm via ${source}` +
@@ -152,6 +180,7 @@ async function main() {
 
   const taildb = await prepareTailDb();
   const tracker = new Tracker(config.statePath);
+  const history = new TrackHistory();
   const enabled = Object.entries(config.rules)
     .filter(([, on]) => on)
     .map(([k]) => k)
@@ -169,6 +198,12 @@ async function main() {
         ` (${o.maxSlantNm}nm max slant), ${o.lookaheadMinutes}min lookahead,` +
         ` scope=${o.scope}${o.only ? ', predicted passes only' : ''}.`,
     );
+    if (o.requireStraight) {
+      log(
+        `Straightness gate: ${o.minSamples} samples over ${o.minSpanSeconds}s+,` +
+          ` turn rate under ${o.maxTurnRateDegSec}°/s.`,
+      );
+    }
   }
   if (!taildb) log('No local tail database - relying on feed enrichment only.');
 
@@ -186,7 +221,7 @@ async function main() {
   let backoff = 0;
   for (;;) {
     try {
-      await poll(tracker, taildb);
+      await poll(tracker, taildb, history);
       backoff = 0;
     } catch (err) {
       // Both feeds are volunteer-run and do go down. Back off rather than

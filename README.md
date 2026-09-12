@@ -260,9 +260,58 @@ since that makes aircraft materialise already on top of you.
 **How selective is it?** A live run over one sky: 109 aircraft within 60 nm,
 **2** whose tracks actually crossed the cone.
 
-Dead reckoning assumes the aircraft holds course — a good bet for a jet in
-cruise, a poor one for something in the circuit. Alerts carry a confidence
-label and say so explicitly beyond two minutes out.
+</details>
+
+<details>
+<summary><b>The straightness gate</b> — not projecting aircraft that are turning</summary>
+
+<br>
+
+Dead reckoning is only honest if the aircraft is actually flying straight, and
+**one observation cannot tell you that**. A jet halfway round a turn looks
+identical to a jet holding that heading — same position, same instantaneous
+track — and extrapolating it produces a confidently wrong answer pointing at
+the wrong part of the sky.
+
+[`history.js`](src/history.js) keeps a rolling window of observations per hex
+and measures the **net** heading change across it, divided by its duration.
+Net rather than largest-step, because reporting jitter cancels itself out while
+a sustained turn accumulates:
+
+| Turn rate | What it is |
+|---|---|
+| 0.008°/s | ADS-B jitter on a genuinely straight track |
+| 0.18°/s | a slow drift — still usable |
+| 0.22°/s | rejected (`OVERHEAD_MAX_TURN_RATE`) |
+| 0.83°/s | a standard-rate turn — projection would be nonsense |
+
+Speed is checked too. An aircraft decelerating into an approach has the right
+heading and the wrong *timing*, so a drift beyond `OVERHEAD_MAX_SPEED_DRIFT_PCT`
+also vetoes the projection.
+
+**The failure it exists to catch.** An aircraft sweeping through the heading
+that happens to point at your house. For exactly one poll its instantaneous
+track aims straight at you, and a naive projection promises a pass that will
+never happen:
+
+```
+poll 0  track  15   naive: no crossing         | with gate: silent
+poll 1  track  30   naive: no crossing         | with gate: silent
+poll 2  track  45   naive: would alert T-3m56s | with gate: HELD (turning 0.50°/s)
+poll 3  track  60   naive: no crossing         | with gate: silent
+poll 4  track  75   naive: no crossing         | with gate: silent
+```
+
+Aircraft with too little history return "not yet" rather than "fine", so a
+newly-appeared contact waits rather than being trusted. Headings wrap correctly:
+355° → 5° is a 10° change, not 350°.
+
+**The cost is lead time.** Samples arrive one per poll, so 3 samples at
+`POLL_SECONDS=30` means about a minute of watching before anything can alert.
+Config validation rejects a warm-up longer than the lookahead window outright,
+since that combination could never produce an alert at all. Held-back aircraft
+are logged as `(unsteady) CALLSIGN (warming up)` or `(turning 0.83°/s)` so you
+can see the gate working rather than wonder why it went quiet.
 
 </details>
 
@@ -413,6 +462,11 @@ Everything lives in `.env`. Blank means "no limit" for the numeric gates.
 | `OVERHEAD_STEP_SECONDS` | `5` | Simulation resolution. |
 | `OVERHEAD_MIN_SPEED_KT` | `40` | Ignore hovering or taxiing aircraft, which cannot be dead-reckoned. |
 | `OVERHEAD_SEARCH_NM` | `60` | Fetch radius. Must cover `~500kt × lookahead`, and validation enforces it. |
+| `OVERHEAD_REQUIRE_STRAIGHT` | `true` | Only project aircraft that have held a steady track across several polls. |
+| `OVERHEAD_MIN_SAMPLES` | `3` | Observations needed before judging. Costs `(n-1) × POLL_SECONDS` of lead time. |
+| `OVERHEAD_MIN_SPAN_SECONDS` | `45` | Minimum window those samples must cover. |
+| `OVERHEAD_MAX_TURN_RATE` | `0.2` | Net heading change per second. A standard-rate turn is 0.83°/s. |
+| `OVERHEAD_MAX_SPEED_DRIFT_PCT` | `20` | Reject aircraft changing speed sharply — right heading, wrong timing. |
 
 #### Repeat suppression
 

@@ -274,6 +274,31 @@ Anything within this distance horizontally counts whatever its elevation. At
 passes. Those alerts tell you they stay below your treeline, so you know to
 listen rather than look. Set `0` to turn it off.
 
+### Why nothing alerts for the first minute
+
+`look-up` will not project an aircraft until it has watched it hold a steady
+track across several polls. One observation cannot tell a straight flight from
+a jet halfway round a turn, and extrapolating the latter sends you looking at
+the wrong patch of sky.
+
+```ini
+OVERHEAD_MIN_SAMPLES=3
+OVERHEAD_MAX_TURN_RATE=0.2
+```
+
+Samples arrive one per poll, so at `POLL_SECONDS=30` that is about a minute of
+watching before anything can alert. You will see it happening in the log:
+
+```
+  (unsteady) RPA4465 (warming up)
+  (unsteady) N400XY (turning 0.83°/s)
+```
+
+For scale, `0.83°/s` is a standard-rate turn and `0.008°/s` is ordinary ADS-B
+jitter on a genuinely straight track. To trade accuracy for warning, drop to
+`OVERHEAD_MIN_SAMPLES=2`; to turn the check off entirely,
+`OVERHEAD_REQUIRE_STRAIGHT=false`.
+
 To get more warning, raise the lookahead — but raise the search radius with it,
 or the app rejects the config:
 

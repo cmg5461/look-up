@@ -106,6 +106,15 @@ export const config = {
     lookaheadMinutes: num('OVERHEAD_LOOKAHEAD_MIN', 6),
     stepSeconds: num('OVERHEAD_STEP_SECONDS', 5),
     minSpeedKt: num('OVERHEAD_MIN_SPEED_KT', 40),
+
+    // Extrapolating a turning aircraft produces a confident wrong answer, so
+    // require several polls of steady flight before trusting a projection.
+    requireStraight: bool('OVERHEAD_REQUIRE_STRAIGHT', true),
+    minSamples: num('OVERHEAD_MIN_SAMPLES', 3),
+    minSpanSeconds: num('OVERHEAD_MIN_SPAN_SECONDS', 45),
+    maxTurnRateDegSec: num('OVERHEAD_MAX_TURN_RATE', 0.2),
+    maxSpeedDriftPct: num('OVERHEAD_MAX_SPEED_DRIFT_PCT', 20),
+
     // How far out to fetch. Must comfortably exceed how far a fast aircraft
     // travels within the lookahead window, or it appears already on top of you.
     searchRadiusNm: num('OVERHEAD_SEARCH_NM', 60),
@@ -147,6 +156,23 @@ export function validate(cfg = config) {
     }
     if (o.maxGroundNm <= 0) problems.push('OVERHEAD_MAX_GROUND_NM must be positive.');
     if (o.cylinderNm < 0) problems.push('OVERHEAD_CYLINDER_NM cannot be negative (0 disables it).');
+    if (o.requireStraight) {
+      if (o.minSamples < 2) {
+        problems.push('OVERHEAD_MIN_SAMPLES must be at least 2 - one sample cannot show a turn.');
+      }
+      if (o.maxTurnRateDegSec <= 0) {
+        problems.push('OVERHEAD_MAX_TURN_RATE must be positive.');
+      }
+      // Samples arrive one per poll, so the warm-up costs real lead time.
+      const warmupSec = (o.minSamples - 1) * cfg.pollSeconds;
+      if (warmupSec >= o.lookaheadMinutes * 60) {
+        problems.push(
+          `OVERHEAD_MIN_SAMPLES (${o.minSamples}) at POLL_SECONDS=${cfg.pollSeconds} needs ` +
+            `${warmupSec}s of observation, which exceeds the ${o.lookaheadMinutes}min lookahead. ` +
+            'Lower the samples, poll faster, or look further ahead.',
+        );
+      }
+    }
     if (o.maxSlantNm <= 0) problems.push('OVERHEAD_MAX_SLANT_NM must be positive.');
     if (o.stepSeconds <= 0) problems.push('OVERHEAD_STEP_SECONDS must be positive.');
     if (!['flagged', 'all'].includes(o.scope)) {
