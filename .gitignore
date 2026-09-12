@@ -1,0 +1,32 @@
+# ---- Secrets and anything identifying. Never commit these. ----------------
+.env
+.env.local
+.env.*.local
+
+# ---- Local runtime state -------------------------------------------------
+# A log of which aircraft passed over your house, and when.
+state.json
+
+# Downloaded tail database, ~31MB. Regenerate with `npm run update-db`.
+data/
+
+# ---- Node ----------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-error.log*
+*.log
+.npm/
+
+# ---- Editors and OS ------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Claude Code ---------------------------------------------------------
+# Session transcripts normally live in ~/.claude, outside the repo. This is
+# belt-and-braces in case a session is ever run from a parent directory.
+.claude/

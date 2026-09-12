@@ -1,0 +1,18 @@
+{
+  "name": "look-up",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Watches the sky above a fixed coordinate and pushes an alert when a military, no-callsign, or privacy-blocked aircraft comes overhead.",
+  "main": "src/index.js",
+  "scripts": {
+    "init": "node src/init.js",
+    "start": "node src/index.js",
+    "once": "node src/index.js --once",
+    "test-notify": "node src/index.js --test-notify",
+    "update-db": "node src/index.js --update-db"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
