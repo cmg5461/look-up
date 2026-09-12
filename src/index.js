@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { config, validate } from './config.js';
 import { fetchNearby } from './sources.js';
-import { normalize, classify, enrich } from './rules.js';
+import { normalize, classify, flagReasons, enrich } from './rules.js';
+import { predictOverhead } from './predict.js';
 import { TailDb } from './taildb.js';
 import { title, body, logLine } from './format.js';
 import { notify } from './notify.js';
@@ -62,20 +63,51 @@ async function prepareTailDb({ force = false } = {}) {
 }
 
 async function poll(tracker, taildb) {
-  const { aircraft, source } = await fetchNearby();
+  // Dead reckoning needs a much wider net than the alert radius: an aircraft
+  // that will be overhead in six minutes is a long way off right now.
+  const searchNm = config.overhead.enabled
+    ? Math.max(config.radiusNm, config.overhead.searchRadiusNm)
+    : config.radiusNm;
+
+  const { aircraft, source } = await fetchNearby({ radiusNm: searchNm });
   const now = Date.now();
+  const overheadOnly = config.overhead.enabled && config.overhead.only;
 
   const candidates = [];
   for (const raw of aircraft) {
     if (!raw?.hex) continue;
     const a = normalize(raw, config);
-    const reasons = classify(a, config);
-    // Only worth a database lookup once we know we care about it.
-    if (reasons.length) candidates.push({ a: enrich(a, taildb), reasons });
+    const here = classify(a, config);
+
+    if (config.overhead.enabled) {
+      // Ask "is this worth projecting?" from the flags alone - `classify`
+      // would have already discarded it for being outside the alert radius,
+      // which is exactly where interesting approaching traffic lives.
+      const flagged = flagReasons(a, config);
+      if (config.overhead.scope === 'all' || flagged.length) {
+        const prediction = predictOverhead(a, config);
+        if (prediction) {
+          a.prediction = prediction;
+          candidates.push({
+            a: enrich(a, taildb),
+            reasons: [...new Set([...flagged, 'overhead'])],
+          });
+          continue;
+        }
+      }
+    }
+
+    // Interesting, but its track will not bring it through your patch of sky.
+    if (here.length && !overheadOnly) {
+      candidates.push({ a: enrich(a, taildb), reasons: here });
+    }
   }
 
-  // Closest first, so if several trip at once the nearest is alerted first.
-  candidates.sort((x, y) => (x.a.distNm ?? 1e9) - (y.a.distNm ?? 1e9));
+  // Soonest first. A predicted pass is ranked by when it arrives; anything
+  // merely nearby sorts after all of them, by distance.
+  const rank = ({ a }) =>
+    a.prediction ? a.prediction.etaSec : 1e6 + (a.distNm ?? 1e5);
+  candidates.sort((x, y) => rank(x) - rank(y));
 
   let alerted = 0;
   for (const { a, reasons } of candidates) {
@@ -97,7 +129,7 @@ async function poll(tracker, taildb) {
   tracker.save();
 
   log(
-    `${String(aircraft.length).padStart(3)} aircraft in ${config.radiusNm}nm via ${source}` +
+    `${String(aircraft.length).padStart(3)} aircraft in ${searchNm}nm via ${source}` +
       ` | ${candidates.length} of interest | ${alerted} alerted`,
   );
 }
@@ -129,6 +161,14 @@ async function main() {
     `Watching ${config.radiusNm}nm around ${config.lat.toFixed(4)}, ${config.lon.toFixed(4)}` +
       ` every ${config.pollSeconds}s. Rules: ${enabled}.`,
   );
+  if (config.overhead.enabled) {
+    const o = config.overhead;
+    log(
+      `Overhead prediction: ${o.minElevationDeg}° cone, ${o.maxSlantNm}nm max slant,` +
+        ` ${o.lookaheadMinutes}min lookahead, scope=${o.scope}` +
+        `${o.only ? ', predicted passes only' : ''}.`,
+    );
+  }
   if (!taildb) log('No local tail database - relying on feed enrichment only.');
 
   let stopping = false;

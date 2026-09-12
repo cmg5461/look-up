@@ -224,6 +224,49 @@ without waiting around.
 Reading a line: distance, compass direction, altitude, aircraft, and which rules
 it tripped.
 
+### Only telling me about planes I can actually see
+
+By default `look-up` runs in **overhead-only** mode: it dead-reckons each
+aircraft forward and alerts only when its track will carry it through the patch
+of sky you can genuinely see. Something interesting that stays 8 nm to your
+north never pings you, because you would never spot it.
+
+The knob that matters is the cone angle:
+
+```ini
+OVERHEAD_MIN_ELEVATION_DEG=45
+```
+
+At 45° the ground radius of "overhead" equals the aircraft's altitude — a jet
+at 30,000 ft counts within 4.9 nm, a helicopter at 1,000 ft within 0.16 nm.
+
+| Setting | Effect |
+|---|---|
+| `60` | Nearly straight up. Very few alerts. |
+| `45` | Default. Unmistakably overhead. |
+| `30` | High in the sky but off to one side. Roughly 2× the ground radius. |
+| `20` | Generous. You will get things you have to hunt for. |
+
+To get more warning, raise the lookahead — but raise the search radius with it,
+or the app rejects the config:
+
+```ini
+OVERHEAD_LOOKAHEAD_MIN=10
+OVERHEAD_SEARCH_NM=100
+```
+
+To hear about *every* aircraft passing overhead rather than only flagged ones:
+
+```ini
+OVERHEAD_SCOPE=all
+```
+
+Expect roughly one alert per airliner that crosses you. On a live test near a
+busy corridor, 109 aircraft within 60 nm produced 2 predicted passes.
+
+To go back to plain proximity alerting, `OVERHEAD=false` or
+`OVERHEAD_ONLY=false`.
+
 ### Too many alerts
 
 Expected on the first run. In rough order of effectiveness:

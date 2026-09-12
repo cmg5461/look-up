@@ -153,7 +153,9 @@ flowchart TD
     F --> N["normalize()<br/>rules.js<br/>recompute distance + bearing<br/>from your true coordinate"]
     N --> C{"classify()<br/>rules.js<br/>gates, then flags"}
     C -->|"no reasons, about 95%"| DROP["discarded"]
-    C -->|"reasons"| E["enrich()<br/>taildb.js<br/>local lookup, only if unnamed"]
+    C -->|"reasons"| P2{"predictOverhead()<br/>predict.js<br/>dead-reckon forward:<br/>will it cross your bubble?"}
+    P2 -->|"no, and OVERHEAD_ONLY"| DROP
+    P2 -->|"yes"| E["enrich()<br/>taildb.js<br/>local lookup, only if unnamed"]
     E --> T{"shouldAlert()<br/>tracker.js<br/>told you already?"}
     T -->|"yes"| LOG["log only"]
     T -->|"no"| P["notify()<br/>notify.js<br/>POST to ntfy"]
@@ -184,6 +186,59 @@ alert body reports it as `look 63° up`, so you know where to point your face.
 
 The noisy no-callsign rule also fires *only* if nothing better already caught the
 aircraft, so a military jet with a blank callsign is one alert, not two.
+
+</details>
+
+<details>
+<summary><b>Overhead prediction</b> — dead reckoning into a cone</summary>
+
+<br>
+
+Being *near* you and being *visible* are different things, and the gap is
+mostly vertical. The volume you can genuinely pick an aircraft out of is the
+intersection of two constraints:
+
+- **A cone**, from `elevation >= OVERHEAD_MIN_ELEVATION_DEG`. Below that an
+  aircraft is low on the horizon, behind trees and rooftops.
+- **A sphere**, from `slant range <= OVERHEAD_MAX_SLANT_NM`. Past that it is a
+  dot you will not resolve however high it sits.
+
+At a given altitude the cone contributes a ground radius of
+`alt / tan(elevation)` and the sphere `sqrt(maxSlant² - alt²)`; whichever is
+smaller wins. **At 45° the cone radius reduces to exactly the altitude**, which
+makes it easy to reason about:
+
+| Aircraft altitude | "Overhead" means within |
+|---|---|
+| 40,000 ft | 6.6 nm |
+| 30,000 ft | 4.9 nm |
+| 10,000 ft | 1.6 nm |
+| 3,000 ft | 0.5 nm |
+| 1,000 ft | 0.16 nm |
+
+A helicopter at 1,000 ft has to be nearly on top of you; a cruising jet gets a
+5 nm window. That is not a quirk, it is what "directly overhead" means.
+
+[`predict.js`](src/predict.js) then dead-reckons each aircraft along its
+current **ground track** (not heading) at its current speed and vertical rate,
+stepping forward `OVERHEAD_STEP_SECONDS` at a time out to
+`OVERHEAD_LOOKAHEAD_MIN`. Stepping rather than solving closed-form is
+deliberate: the bubble's radius changes with altitude, so a climbing or
+descending aircraft chases a moving target and there is no clean analytic
+answer. A few hundred steps per aircraft costs nothing.
+
+Because approaching traffic is *far away* when it matters, prediction fetches a
+much wider radius (`OVERHEAD_SEARCH_NM`, default 60) than the alert radius, and
+tests flags directly rather than going through the distance-gated `classify()`.
+Config validation rejects a search radius too small for the lookahead window,
+since that makes aircraft materialise already on top of you.
+
+**How selective is it?** A live run over one sky: 109 aircraft within 60 nm,
+**2** whose tracks actually crossed the cone.
+
+Dead reckoning assumes the aircraft holds course — a good bet for a jet in
+cruise, a poor one for something in the circuit. Alerts carry a confidence
+label and say so explicitly beyond two minutes out.
 
 </details>
 
@@ -248,6 +303,7 @@ links to ADSBExchange instead of the feed that just failed to identify it.
 | **Interesting** | `dbFlags` bit 2. | `ALERT_INTERESTING=true` |
 | **PIA** | `dbFlags` bit 4. Rotating anonymised addresses — the flag that catches genuinely privacy-blocked aircraft. | `ALERT_PIA=true` |
 | **LADD** | `dbFlags` bit 8. **Off by default**: applied liberally and goes stale, so scheduled airliners routinely carry it. | `ALERT_LADD=false` |
+| **Overhead** | Not a flag but a *filter*: dead-reckons each aircraft forward and keeps only those whose track crosses the patch of sky you can actually see. See below. | `OVERHEAD=true` |
 
 ---
 
@@ -318,6 +374,20 @@ Everything lives in `.env`. Blank means "no limit" for the numeric gates.
 | `NO_CALLSIGN_MAX_ALT_FT` | `15000` | Tighter ceiling for the same. |
 | `NO_CALLSIGN_SKIP_MLAT_TISB` | `true` | Ignore second-hand positions, which usually lack a callsign for boring reasons. |
 
+#### Overhead prediction
+
+| Key | Default | Meaning |
+|---|---|---|
+| `OVERHEAD` | `true` | Enable dead-reckoning prediction. |
+| `OVERHEAD_ONLY` | `true` | Alert *only* on predicted passes, suppressing plain in-radius alerts for aircraft that will never come overhead. |
+| `OVERHEAD_SCOPE` | `flagged` | `flagged` projects only aircraft that trip a rule; `all` projects everything, airliners included. |
+| `OVERHEAD_MIN_ELEVATION_DEG` | `45` | Cone half-angle above the horizon. At 45° the ground radius equals the altitude. |
+| `OVERHEAD_MAX_SLANT_NM` | `25` | Beyond this you will not pick it out however high it is. |
+| `OVERHEAD_LOOKAHEAD_MIN` | `6` | How far ahead to project. More warning, less accuracy. |
+| `OVERHEAD_STEP_SECONDS` | `5` | Simulation resolution. |
+| `OVERHEAD_MIN_SPEED_KT` | `40` | Ignore hovering or taxiing aircraft, which cannot be dead-reckoned. |
+| `OVERHEAD_SEARCH_NM` | `60` | Fetch radius. Must cover `~500kt × lookahead`, and validation enforces it. |
+
 #### Repeat suppression
 
 | Key | Default | Meaning |
@@ -382,6 +452,11 @@ will still miss genuinely uncatalogued airframes.
 **Flags are opinions.** Military, LADD, PIA and type all come from that database.
 Different trackers disagree because they ship different snapshots, not because
 they hear different signals.
+
+**Dead reckoning is a straight-line guess.** It assumes an aircraft holds its
+current track, speed and vertical rate. Anything turning, levelling off, or
+entering a hold will not go where the projection says. Confidence degrades with
+lookahead, and alerts say so.
 
 **A tight radius means real silence.** At `RADIUS_NM=10` you may see nothing for
 hours. That is the setting working, not the app failing.

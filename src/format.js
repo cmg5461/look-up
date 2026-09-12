@@ -1,5 +1,14 @@
 import { REASONS } from './rules.js';
 
+/** Compact duration: "45s", "4m", "4m10s". */
+export function duration(sec) {
+  const t = Math.round(sec);
+  if (t < 60) return `${t}s`;
+  const m = Math.floor(t / 60);
+  const r = t % 60;
+  return r ? `${m}m${r}s` : `${m}m`;
+}
+
 const round = (n, places = 0) =>
   n == null ? null : Number(n.toFixed(places)).toLocaleString('en-US');
 
@@ -12,6 +21,15 @@ export function describe(a) {
 }
 
 export function title(a, reasons) {
+  const p = a.prediction;
+  if (p) {
+    // Lead with the thing you can act on: how long until you should look up.
+    const when = p.alreadyInside ? 'OVERHEAD NOW' : `OVERHEAD in ${duration(p.etaSec)}`;
+    const flags = reasons.filter((r) => r !== 'overhead');
+    const what = flags.length ? `${flags.map((r) => REASONS[r].label).join(' + ')} ` : '';
+    return `${when} - ${what}${describe(a)}`;
+  }
+
   const labels = reasons.map((r) => REASONS[r].label).join(' + ');
   const where =
     a.elevationDeg != null && a.elevationDeg >= 60
@@ -22,8 +40,47 @@ export function title(a, reasons) {
   return `${labels} - ${describe(a)} ${where}`;
 }
 
+/** The projected-pass block: where to look, when, and for how long. */
+function predictionLines(a) {
+  const p = a.prediction;
+  const lines = [];
+
+  lines.push(
+    p.alreadyInside
+      ? `In your sky NOW, for about ${duration(p.durationSec)} more.`
+      : `Enters your sky from the ${p.entryCompass} in ${duration(p.etaSec)}, ` +
+        `overhead for about ${duration(p.durationSec)}.`,
+  );
+  lines.push(
+    `Peak ${round(p.peakElevationDeg)}° up` +
+      `${p.alreadyInside ? '' : ` at ${duration(p.peakSec)}`}` +
+      `, closest ${round(p.minSlantNm, 1)} nm.`,
+  );
+
+  const vs =
+    a.verticalRateFpm == null || Math.abs(a.verticalRateFpm) < 200
+      ? 'level'
+      : a.verticalRateFpm > 0
+        ? `climbing ${round(Math.abs(a.verticalRateFpm))} fpm`
+        : `descending ${round(Math.abs(a.verticalRateFpm))} fpm`;
+  lines.push(
+    `Now: ${round(a.distNm, 1)} nm ${a.compass}, ${round(a.altFt)} ft, ${vs}, ` +
+      `${round(a.groundSpeedKt)} kt on ${round(a.track)}°.`,
+  );
+
+  // Dead reckoning assumes it holds this track. Say so when that is a stretch.
+  if (p.confidence !== 'high') {
+    lines.push(
+      `Projection assumes it holds course - ${p.confidence} confidence at this range.`,
+    );
+  }
+  return lines;
+}
+
 export function body(a, reasons) {
   const lines = [];
+
+  if (a.prediction) lines.push(...predictionLines(a), '');
 
   if (!a.callsign && !reasons.includes('noCallsign')) {
     lines.push('No callsign broadcast.');
@@ -44,23 +101,27 @@ export function body(a, reasons) {
     lines.push(`Reg/tail: ${a.registration}${a.year ? ` (${a.year})` : ''}`);
   }
 
-  const altText =
-    a.altFt == null
-      ? 'altitude unknown'
-      : a.altFt === 0
-        ? 'on the ground'
-        : `${round(a.altFt)} ft`;
-  const speedText = a.groundSpeedKt == null ? null : `${round(a.groundSpeedKt)} kt`;
-  lines.push([altText, speedText].filter(Boolean).join(', '));
+  // With a prediction present, its "Now:" line already gives altitude, speed,
+  // distance and bearing - no need to state all of it twice.
+  if (!a.prediction) {
+    const altText =
+      a.altFt == null
+        ? 'altitude unknown'
+        : a.altFt === 0
+          ? 'on the ground'
+          : `${round(a.altFt)} ft`;
+    const speedText = a.groundSpeedKt == null ? null : `${round(a.groundSpeedKt)} kt`;
+    lines.push([altText, speedText].filter(Boolean).join(', '));
 
-  if (a.distNm != null) {
-    const look =
-      a.elevationDeg == null
-        ? ''
-        : ` - look ${round(a.elevationDeg)}\u00b0 up`;
-    lines.push(
-      `${round(a.distNm, 1)} nm away, bearing ${round(a.bearing)}\u00b0 ${a.compass}${look}`,
-    );
+    if (a.distNm != null) {
+      const look =
+        a.elevationDeg == null
+          ? ''
+          : ` - look ${round(a.elevationDeg)}\u00b0 up`;
+      lines.push(
+        `${round(a.distNm, 1)} nm away, bearing ${round(a.bearing)}\u00b0 ${a.compass}${look}`,
+      );
+    }
   }
 
   if (a.namedLocally) lines.push('(named from local tail database; the feed had no row)');
@@ -85,8 +146,11 @@ export function body(a, reasons) {
 /** One-line summary for the console log. */
 export function logLine(a, reasons) {
   const tags = reasons.map((r) => REASONS[r].tag).join(',');
+  const eta = a.prediction
+    ? (a.prediction.alreadyInside ? 'NOW' : `T-${duration(a.prediction.etaSec)}`).padStart(7)
+    : '       ';
   const dist = a.distNm == null ? '  ?  ' : `${a.distNm.toFixed(1).padStart(5)}nm`;
   const alt = a.altFt == null ? '     ?' : `${String(a.altFt).padStart(6)}ft`;
   const dir = a.compass ? a.compass.padEnd(3) : '  ?';
-  return `${dist} ${dir} ${alt}  ${describe(a).padEnd(28)} [${tags}]`;
+  return `${eta} ${dist} ${dir} ${alt}  ${describe(a).padEnd(28)} [${tags}]`;
 }

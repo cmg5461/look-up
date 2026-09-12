@@ -81,6 +81,26 @@ export const config = {
     priorityNoCallsign: num('PRIORITY_NO_CALLSIGN', 3),
   },
 
+  // Dead-reckoning: project aircraft forward and alert on the ones whose
+  // tracks will carry them through the patch of sky you can actually see.
+  overhead: {
+    enabled: bool('OVERHEAD', true),
+    // Only alert on predicted passes, suppressing plain in-radius alerts for
+    // aircraft that will never come overhead.
+    only: bool('OVERHEAD_ONLY', true),
+    // 'flagged' projects only aircraft that trip a rule (military, PIA, ...);
+    // 'all' projects every aircraft, which means every airliner too.
+    scope: str('OVERHEAD_SCOPE', 'flagged').toLowerCase(),
+    minElevationDeg: num('OVERHEAD_MIN_ELEVATION_DEG', 45),
+    maxSlantNm: num('OVERHEAD_MAX_SLANT_NM', 25),
+    lookaheadMinutes: num('OVERHEAD_LOOKAHEAD_MIN', 6),
+    stepSeconds: num('OVERHEAD_STEP_SECONDS', 5),
+    minSpeedKt: num('OVERHEAD_MIN_SPEED_KT', 40),
+    // How far out to fetch. Must comfortably exceed how far a fast aircraft
+    // travels within the lookahead window, or it appears already on top of you.
+    searchRadiusNm: num('OVERHEAD_SEARCH_NM', 60),
+  },
+
   // Local tail database, used to name aircraft the aggregator APIs serve
   // stale or empty rows for.
   taildb: {
@@ -109,6 +129,30 @@ export function validate(cfg = config) {
   }
   if (!Object.values(cfg.rules).some(Boolean)) {
     problems.push('All alert rules are disabled, so nothing would ever fire.');
+  }
+  const o = cfg.overhead;
+  if (o.enabled) {
+    if (o.minElevationDeg <= 0 || o.minElevationDeg >= 90) {
+      problems.push('OVERHEAD_MIN_ELEVATION_DEG must be between 1 and 89 (90 is straight up).');
+    }
+    if (o.maxSlantNm <= 0) problems.push('OVERHEAD_MAX_SLANT_NM must be positive.');
+    if (o.stepSeconds <= 0) problems.push('OVERHEAD_STEP_SECONDS must be positive.');
+    if (!['flagged', 'all'].includes(o.scope)) {
+      problems.push(`OVERHEAD_SCOPE must be "flagged" or "all", got "${o.scope}".`);
+    }
+    // A 450kt jet covers 7.5nm a minute; if the search radius does not cover
+    // the lookahead window, aircraft materialise already inside the bubble.
+    const reach = 500 * (o.lookaheadMinutes / 60);
+    if (o.searchRadiusNm < reach) {
+      problems.push(
+        `OVERHEAD_SEARCH_NM (${o.searchRadiusNm}) is too small for ` +
+          `OVERHEAD_LOOKAHEAD_MIN (${o.lookaheadMinutes}): a fast aircraft covers ` +
+          `~${Math.ceil(reach)}nm in that time. Raise it or shorten the lookahead.`,
+      );
+    }
+    if (o.searchRadiusNm > 250) {
+      problems.push('OVERHEAD_SEARCH_NM must be 250 or less (the upstream API caps there).');
+    }
   }
   const hasNtfy = Boolean(cfg.notify.ntfyTopic);
   const hasPushover = Boolean(cfg.notify.pushoverToken && cfg.notify.pushoverUser);

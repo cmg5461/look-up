@@ -12,6 +12,7 @@ export const REASONS = {
   interesting: { label: 'SPECIAL', tag: 'interesting' },
   pia: { label: 'PIA (anonymised)', tag: 'pia' },
   ladd: { label: 'LADD (blocked)', tag: 'ladd' },
+  overhead: { label: 'OVERHEAD', tag: 'overhead' },
 };
 
 const trimmed = (v) => (typeof v === 'string' ? v.trim() : '');
@@ -48,8 +49,18 @@ export function normalize(ac, cfg) {
     emergency: trimmed(ac.emergency),
     dbFlags: ac.dbFlags ?? 0,
     altFt,
+    lat: hasPosition ? ac.lat : null,
+    lon: hasPosition ? ac.lon : null,
     groundSpeedKt: typeof ac.gs === 'number' ? ac.gs : null,
+    // Ground track, not heading: dead reckoning cares where it is actually
+    // going, not where the nose points.
     track: typeof ac.track === 'number' ? ac.track : null,
+    verticalRateFpm:
+      typeof ac.baro_rate === 'number'
+        ? ac.baro_rate
+        : typeof ac.geom_rate === 'number'
+          ? ac.geom_rate
+          : null,
     // A position from MLAT or TIS-B is second-hand: multilaterated by
     // ground receivers or rebroadcast by ATC radar. Such targets very often
     // carry no callsign simply because none was ever transmitted.
@@ -93,17 +104,16 @@ function passesNoCallsignGates(a, cfg) {
 }
 
 /**
- * Which alert rules does this aircraft trip? Returns a list of reason keys,
- * empty if it is of no interest.
+ * Which flag-based rules this aircraft trips, ignoring where it is. Used both
+ * by `classify` and by the overhead predictor, which needs to know whether a
+ * contact 40nm away is worth projecting long before it is close enough to
+ * alert on.
  */
-export function classify(a, cfg) {
-  if (!passesGlobalGates(a, cfg)) return [];
-
+export function flagReasons(a, cfg) {
   const reasons = [];
   const flags = a.dbFlags;
 
   if (cfg.rules.military && flags & DB_MILITARY) reasons.push('military');
-
   if (cfg.rules.interesting && flags & DB_INTERESTING) reasons.push('interesting');
   if (cfg.rules.pia && flags & DB_PIA) reasons.push('pia');
   if (cfg.rules.ladd && flags & DB_LADD) reasons.push('ladd');
@@ -112,9 +122,24 @@ export function classify(a, cfg) {
   // caught this aircraft; a flagged military jet with a blank callsign is
   // already an alert, and listing both reasons just dilutes the headline.
   if (cfg.rules.noCallsign && !a.callsign && reasons.length === 0) {
-    if (passesNoCallsignGates(a, cfg)) reasons.push('noCallsign');
+    reasons.push('noCallsign');
   }
 
+  return reasons;
+}
+
+/**
+ * Which alert rules does this aircraft trip right now? Returns a list of
+ * reason keys, empty if it is of no interest or out of range.
+ */
+export function classify(a, cfg) {
+  if (!passesGlobalGates(a, cfg)) return [];
+
+  const reasons = flagReasons(a, cfg);
+  // The no-callsign rule carries tighter gates of its own.
+  if (reasons.length === 1 && reasons[0] === 'noCallsign' && !passesNoCallsignGates(a, cfg)) {
+    return [];
+  }
   return reasons;
 }
 
