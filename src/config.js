@@ -107,13 +107,14 @@ export const config = {
     stepSeconds: num('OVERHEAD_STEP_SECONDS', 5),
     minSpeedKt: num('OVERHEAD_MIN_SPEED_KT', 40),
 
-    // Extrapolating a turning aircraft produces a confident wrong answer, so
-    // require several polls of steady flight before trusting a projection.
+    // Extrapolating a turning or decelerating aircraft produces a confident
+    // wrong answer, so fit its recent positions and check the fit first.
     requireStraight: bool('OVERHEAD_REQUIRE_STRAIGHT', true),
-    minSamples: num('OVERHEAD_MIN_SAMPLES', 3),
-    minSpanSeconds: num('OVERHEAD_MIN_SPAN_SECONDS', 45),
-    maxTurnRateDegSec: num('OVERHEAD_MAX_TURN_RATE', 0.2),
-    maxSpeedDriftPct: num('OVERHEAD_MAX_SPEED_DRIFT_PCT', 20),
+    minSamples: num('OVERHEAD_MIN_SAMPLES', 4),
+    minSpanSeconds: num('OVERHEAD_MIN_SPAN_SECONDS', 60),
+    // RMS deviation from a constant-velocity fit, as a fraction of distance
+    // travelled - dimensionless, and independent of the aircraft's speed.
+    maxPathResidual: num('OVERHEAD_MAX_PATH_RESIDUAL', 0.015),
 
     // How far out to fetch. Must comfortably exceed how far a fast aircraft
     // travels within the lookahead window, or it appears already on top of you.
@@ -160,8 +161,8 @@ export function validate(cfg = config) {
       if (o.minSamples < 2) {
         problems.push('OVERHEAD_MIN_SAMPLES must be at least 2 - one sample cannot show a turn.');
       }
-      if (o.maxTurnRateDegSec <= 0) {
-        problems.push('OVERHEAD_MAX_TURN_RATE must be positive.');
+      if (o.maxPathResidual <= 0) {
+        problems.push('OVERHEAD_MAX_PATH_RESIDUAL must be positive.');
       }
       // Samples arrive one per poll, so the warm-up costs real lead time.
       const warmupSec = (o.minSamples - 1) * cfg.pollSeconds;

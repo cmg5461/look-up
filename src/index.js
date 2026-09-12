@@ -88,32 +88,37 @@ async function poll(tracker, taildb, history) {
       // which is exactly where interesting approaching traffic lives.
       const flagged = flagReasons(a, config);
       if (config.overhead.scope === 'all' || flagged.length) {
-        const prediction = predictOverhead(a, config);
+        // Dead reckoning assumes constant velocity in a straight line, so
+        // check that assumption against the recent path before trusting it.
+        // A null fit means "not enough history yet" - a wait, not a pass.
+        const fit = config.overhead.requireStraight
+          ? history.fit(a.hex, config)
+          : null;
+        const usable = !config.overhead.requireStraight || Boolean(fit?.straight);
+
+        // Project from the fitted velocity rather than the instantaneous
+        // reported track: it averages out reporting jitter, and it is the
+        // very motion the straightness check just validated.
+        const projectFrom = fit?.straight
+          ? { ...a, track: fit.heading, groundSpeedKt: fit.speedKt }
+          : a;
+
+        const prediction = usable ? predictOverhead(projectFrom, config) : null;
         if (prediction) {
-          // Extrapolation is only honest if the aircraft is actually flying
-          // straight. A jet halfway round a turn looks identical to one
-          // holding that heading, so check several polls before believing it.
-          // Null steadiness means "not enough history yet", which is a wait,
-          // not a pass - a later poll decides.
-          const steadiness = config.overhead.requireStraight
-            ? history.steadiness(a.hex, config)
-            : null;
+          a.fit = fit;
+          a.prediction = prediction;
+          candidates.push({
+            a: enrich(a, taildb),
+            reasons: [...new Set([...flagged, 'overhead'])],
+          });
+          continue;
+        }
 
-          if (!config.overhead.requireStraight || steadiness?.steady) {
-            a.steadiness = steadiness;
-            a.prediction = prediction;
-            candidates.push({
-              a: enrich(a, taildb),
-              reasons: [...new Set([...flagged, 'overhead'])],
-            });
-            continue;
-          }
-
+        // Worth a log line only if it would otherwise have been a candidate.
+        if (!usable && predictOverhead(a, config)) {
           skipped.push(
             `${a.callsign || a.hex} (${
-              steadiness === null
-                ? 'warming up'
-                : `turning ${steadiness.turnRate.toFixed(2)}°/s`
+              fit === null ? 'warming up' : `path residual ${fit.residual.toFixed(3)}`
             })`,
           );
         }
@@ -200,8 +205,8 @@ async function main() {
     );
     if (o.requireStraight) {
       log(
-        `Straightness gate: ${o.minSamples} samples over ${o.minSpanSeconds}s+,` +
-          ` turn rate under ${o.maxTurnRateDegSec}°/s.`,
+        `Straightness gate: constant-velocity fit over ${o.minSamples} samples` +
+          ` (${o.minSpanSeconds}s+), path residual under ${o.maxPathResidual}.`,
       );
     }
   }

@@ -274,30 +274,41 @@ Anything within this distance horizontally counts whatever its elevation. At
 passes. Those alerts tell you they stay below your treeline, so you know to
 listen rather than look. Set `0` to turn it off.
 
-### Why nothing alerts for the first minute
+### Why nothing alerts for the first minute or two
 
-`look-up` will not project an aircraft until it has watched it hold a steady
-track across several polls. One observation cannot tell a straight flight from
-a jet halfway round a turn, and extrapolating the latter sends you looking at
-the wrong patch of sky.
+`look-up` will not project an aircraft until it has watched it long enough to
+fit its path. Dead reckoning assumes constant velocity in a straight line, and
+one observation cannot tell you whether that holds — a jet halfway round a turn
+looks exactly like one holding that heading.
 
 ```ini
-OVERHEAD_MIN_SAMPLES=3
-OVERHEAD_MAX_TURN_RATE=0.2
+OVERHEAD_MIN_SAMPLES=4
+OVERHEAD_MAX_PATH_RESIDUAL=0.015
 ```
 
-Samples arrive one per poll, so at `POLL_SECONDS=30` that is about a minute of
-watching before anything can alert. You will see it happening in the log:
+Samples arrive one per poll, so at `POLL_SECONDS=30` that is about 90 seconds
+of watching before a newly-seen aircraft can alert. You will see it in the log:
 
 ```
   (unsteady) RPA4465 (warming up)
-  (unsteady) N400XY (turning 0.83°/s)
+  (unsteady) N400XY (path residual 0.044)
 ```
 
-For scale, `0.83°/s` is a standard-rate turn and `0.008°/s` is ordinary ADS-B
-jitter on a genuinely straight track. To trade accuracy for warning, drop to
-`OVERHEAD_MIN_SAMPLES=2`; to turn the check off entirely,
-`OVERHEAD_REQUIRE_STRAIGHT=false`.
+The residual is how far the actual path strays from a constant-velocity fit,
+as a fraction of the distance travelled — so it means the same thing at any
+speed. For scale:
+
+| Residual | What it is |
+|---|---|
+| 0.0026 | ADS-B jitter on a genuinely straight track |
+| 0.0087 | a slow 0.1°/s drift, still usable |
+| 0.0175 | a 0.2°/s turn |
+| 0.0208 | straight but decelerating 450 → 300 kt |
+| 0.0752 | a standard-rate turn |
+
+Raise the threshold to be more permissive, lower it to be stricter. To trade
+accuracy for warning, drop to `OVERHEAD_MIN_SAMPLES=3`; to turn the check off
+entirely, `OVERHEAD_REQUIRE_STRAIGHT=false`.
 
 To get more warning, raise the lookahead — but raise the search radius with it,
 or the app rejects the config:

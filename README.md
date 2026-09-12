@@ -263,55 +263,68 @@ since that makes aircraft materialise already on top of you.
 </details>
 
 <details>
-<summary><b>The straightness gate</b> — not projecting aircraft that are turning</summary>
+<summary><b>The straightness gate</b> — checking dead reckoning's own assumption</summary>
 
 <br>
 
-Dead reckoning is only honest if the aircraft is actually flying straight, and
-**one observation cannot tell you that**. A jet halfway round a turn looks
-identical to a jet holding that heading — same position, same instantaneous
-track — and extrapolating it produces a confidently wrong answer pointing at
-the wrong part of the sky.
+Dead reckoning assumes **constant velocity in a straight line**. One
+observation cannot tell you whether that holds — a jet halfway round a turn
+looks identical to one holding that heading, same position, same instantaneous
+track — so a projection built on it is confidently wrong.
 
-[`history.js`](src/history.js) keeps a rolling window of observations per hex
-and measures the **net** heading change across it, divided by its duration.
-Net rather than largest-step, because reporting jitter cancels itself out while
-a sustained turn accumulates:
+[`history.js`](src/history.js) keeps recent positions per hex and fits them
+with two least-squares regressions: **x against time, and y against time**,
+ignoring altitude. Together those describe motion at constant velocity, which
+is precisely what the projection assumes. So the residual is not an abstract
+goodness-of-fit — **it measures how wrong that assumption already is** over the
+window just observed.
 
-| Turn rate | What it is |
+Two details earn their keep:
+
+- **Fitting x and y separately, not y against x.** A due-north track has
+  infinite slope in `y = mx + b` and would blow up. Fitting each axis against
+  time is orientation-free; heading recovery is exact due north, west and south.
+- **Reporting the residual as a fraction of distance travelled.** That makes it
+  dimensionless and **independent of speed** — a 0.2°/s turn reads 0.0175
+  whether the aircraft is doing 450 knots or 110.
+
+One number catches two different failures, because a turn curves the path and a
+deceleration curves `x(t)` and `y(t)` even when the path is dead straight:
+
+| Residual | What produces it |
 |---|---|
-| 0.008°/s | ADS-B jitter on a genuinely straight track |
-| 0.18°/s | a slow drift — still usable |
-| 0.22°/s | rejected (`OVERHEAD_MAX_TURN_RATE`) |
-| 0.83°/s | a standard-rate turn — projection would be nonsense |
+| 0.0026 | worst-case ADS-B position jitter on a straight track |
+| 0.0087 | a 0.1°/s drift — still usable |
+| **0.0150** | **the threshold** (`OVERHEAD_MAX_PATH_RESIDUAL`) |
+| 0.0175 | a 0.2°/s turn |
+| 0.0208 | dead straight, decelerating 450 → 300 kt |
+| 0.0752 | a standard-rate turn |
 
-Speed is checked too. An aircraft decelerating into an approach has the right
-heading and the wrong *timing*, so a drift beyond `OVERHEAD_MAX_SPEED_DRIFT_PCT`
-also vetoes the projection.
+The fit is also what the projection then *uses*: heading and speed come from
+the fitted velocity rather than the instantaneous reported track, which averages
+out jitter and is the very motion just validated.
 
-**The failure it exists to catch.** An aircraft sweeping through the heading
-that happens to point at your house. For exactly one poll its instantaneous
-track aims straight at you, and a naive projection promises a pass that will
-never happen:
+**The failure it exists to catch** is an aircraft curving through the heading
+that happens to point at your house. For one poll its track aims straight at
+you and a naive projection promises a pass that never happens:
 
 ```
-poll 0  track  15   naive: no crossing         | with gate: silent
-poll 1  track  30   naive: no crossing         | with gate: silent
-poll 2  track  45   naive: would alert T-3m56s | with gate: HELD (turning 0.50°/s)
-poll 3  track  60   naive: no crossing         | with gate: silent
-poll 4  track  75   naive: no crossing         | with gate: silent
+poll 0  trk  15  42nm  naive: -       | held (warming up)
+poll 1  trk  30  39nm  naive: -       | held (warming up)
+poll 2  trk  45  35nm  naive: T-4m29s | held (warming up)
+poll 3  trk  60  31nm  naive: -       | HELD (residual 0.0443)
+poll 4  trk  75  28nm  naive: -       | HELD (residual 0.0443)
 ```
 
-Aircraft with too little history return "not yet" rather than "fine", so a
-newly-appeared contact waits rather than being trusted. Headings wrap correctly:
-355° → 5° is a 10° change, not 350°.
+Aircraft with too little history return null — "not yet", not "fine" — so a
+newly-appeared contact waits rather than being trusted.
 
-**The cost is lead time.** Samples arrive one per poll, so 3 samples at
-`POLL_SECONDS=30` means about a minute of watching before anything can alert.
-Config validation rejects a warm-up longer than the lookahead window outright,
-since that combination could never produce an alert at all. Held-back aircraft
-are logged as `(unsteady) CALLSIGN (warming up)` or `(turning 0.83°/s)` so you
-can see the gate working rather than wonder why it went quiet.
+**The cost is lead time.** Samples arrive one per poll, so 4 samples at
+`POLL_SECONDS=30` means about 90 seconds of watching before a newly-seen
+aircraft can alert. Config validation rejects a warm-up longer than the
+lookahead window outright, since that combination could never alert at all.
+Held aircraft are logged as `(unsteady) CALLSIGN (warming up)` or
+`(path residual 0.044)` so the quiet is legible.
 
 </details>
 
@@ -463,10 +476,9 @@ Everything lives in `.env`. Blank means "no limit" for the numeric gates.
 | `OVERHEAD_MIN_SPEED_KT` | `40` | Ignore hovering or taxiing aircraft, which cannot be dead-reckoned. |
 | `OVERHEAD_SEARCH_NM` | `60` | Fetch radius. Must cover `~500kt × lookahead`, and validation enforces it. |
 | `OVERHEAD_REQUIRE_STRAIGHT` | `true` | Only project aircraft that have held a steady track across several polls. |
-| `OVERHEAD_MIN_SAMPLES` | `3` | Observations needed before judging. Costs `(n-1) × POLL_SECONDS` of lead time. |
-| `OVERHEAD_MIN_SPAN_SECONDS` | `45` | Minimum window those samples must cover. |
-| `OVERHEAD_MAX_TURN_RATE` | `0.2` | Net heading change per second. A standard-rate turn is 0.83°/s. |
-| `OVERHEAD_MAX_SPEED_DRIFT_PCT` | `20` | Reject aircraft changing speed sharply — right heading, wrong timing. |
+| `OVERHEAD_MIN_SAMPLES` | `4` | Positions fitted. Costs `(n-1) × POLL_SECONDS` of lead time. |
+| `OVERHEAD_MIN_SPAN_SECONDS` | `60` | Minimum window those samples must cover. |
+| `OVERHEAD_MAX_PATH_RESIDUAL` | `0.015` | RMS deviation from the constant-velocity fit, as a fraction of distance travelled. Dimensionless and speed-independent. |
 
 #### Repeat suppression
 
