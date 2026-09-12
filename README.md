@@ -539,6 +539,7 @@ Also available, rarely needed: `STATE_PATH`, `USER_AGENT`.
 
 | Command | What |
 |---|---|
+| `npm test` | Run the test suite. No network, no dependencies, ~80ms. |
 | `npm run init` | Create `.env` with a freshly generated private ntfy topic. |
 | `npm start` | Run the watch loop. |
 | `npm run once` | One poll, print, exit. The one to use while tuning. |
@@ -546,6 +547,38 @@ Also available, rarely needed: `STATE_PATH`, `USER_AGENT`.
 | `npm run update-db` | Force a tail database refresh. |
 
 ---
+
+## Tests
+
+```sh
+npm test
+```
+
+35 cases over the geometry, the projection, and the path fit. No network, no
+dependencies, no fixtures on disk — `node:test` and about 80 milliseconds.
+
+> [!IMPORTANT]
+> **Tests must never use a real location.** Every test observes from Central
+> Park (`40.7829, -73.9654`), declared once in
+> [`test/fixture.js`](test/fixture.js). Aircraft are placed by *bearing and
+> distance from the observer*, so the absolute coordinate is arbitrary — there
+> is nothing to gain by using your own, and a coordinate committed once is
+> committed forever.
+>
+> The fixture is also a deliberately *representative* place. The first choice
+> was the Washington Monument, which sits inside **P-56**, the prohibited
+> airspace over central DC — almost nothing legally flies over it, which makes
+> it the worst possible fixture for an overhead-aircraft app.
+
+`fixture.js` pins every setting the suite depends on **before** `config.js` is
+imported. Since config only falls back to `.env` for keys still undefined, that
+isolates the tests from whatever you have configured locally while keeping the
+real parsing and defaulting logic under test.
+
+The suite is mutation-tested. Ten deliberate regressions — removing the
+cylinder, disabling the refinement pass, dropping the already-overhead
+exemption, un-normalising the path residual, flipping the heading fit's
+argument order — were each caught.
 
 ## Limitations
 
@@ -609,6 +642,9 @@ src/
   format.js    alert titles and bodies
   geo.js       distance, bearing, destination, compass, elevation angle
   init.js      first-run setup: generates .env and a private topic
+test/
+  fixture.js   the observer location and test helpers
+  *.test.js    geometry, projection, and path-fit cases
 data/          the tail database (gitignored, ~31MB)
 .env           your secrets and location (gitignored)
 .env.example   committed template, no real values
