@@ -323,6 +323,28 @@ OVERHEAD_LOOKAHEAD_MIN=10
 OVERHEAD_SEARCH_NM=100
 ```
 
+### Alerts that never arrive overhead
+
+If you get alerted about aircraft that then turn away, the lookahead is
+reaching too far ahead — not the search radius, which only decides who is
+*considered*. A projection assumes the aircraft holds course, and at six
+minutes a jet has to hold heading within about 4° to still cross you. Traffic
+turning onto an approach misses that easily.
+
+Tighten the window in which a prediction is worth a notification:
+
+```ini
+OVERHEAD_ALERT_WITHIN_SEC=120
+```
+
+Prediction still runs to the full lookahead, so the log keeps showing what is
+coming as `(watching) DAL123 (T-4m12s)` — only the push waits. Watch a few of
+those lines and see whether they arrive; that tells you where to set it. It
+cannot go below `POLL_SECONDS`, or a pass could fall between two polls unseen.
+
+Something already overhead ignores this setting entirely — it has been
+observed, not predicted.
+
 To hear about *every* aircraft passing overhead rather than only flagged ones:
 
 ```ini

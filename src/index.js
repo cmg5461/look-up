@@ -2,10 +2,10 @@
 import { config, validate } from './config.js';
 import { fetchNearby } from './sources.js';
 import { normalize, classify, flagReasons, enrich } from './rules.js';
-import { predictOverhead } from './predict.js';
+import { predictOverhead, alertable } from './predict.js';
 import { TrackHistory } from './history.js';
 import { TailDb } from './taildb.js';
-import { title, body, logLine } from './format.js';
+import { title, body, logLine, duration } from './format.js';
 import { notify } from './notify.js';
 import { Tracker } from './tracker.js';
 
@@ -75,7 +75,7 @@ async function poll(tracker, taildb, history) {
   const overheadOnly = config.overhead.enabled && config.overhead.only;
 
   const candidates = [];
-  const skipped = [];
+  const watching = [];
   for (const raw of aircraft) {
     if (!raw?.hex) continue;
     const a = normalize(raw, config);
@@ -94,15 +94,21 @@ async function poll(tracker, taildb, history) {
           config.overhead.requireStraight ? history.fit(a.hex, config) : null,
         );
         if (overhead?.now.insideBubble || overhead?.projected) {
-          a.overhead = overhead;
-          candidates.push({
-            a: enrich(a, taildb),
-            reasons: [...new Set([...flagged, 'overhead'])],
-          });
+          if (alertable(overhead, config)) {
+            a.overhead = overhead;
+            candidates.push({
+              a: enrich(a, taildb),
+              reasons: [...new Set([...flagged, 'overhead'])],
+            });
+            continue;
+          }
+          watching.push(
+            `${a.callsign || a.hex} (T-${duration(overhead.projected.etaSec)})`,
+          );
           continue;
         }
         if (overhead?.held) {
-          skipped.push(`${a.callsign || a.hex} (${overhead.held})`);
+          watching.push(`${a.callsign || a.hex} (${overhead.held})`);
         }
       }
     }
@@ -139,8 +145,11 @@ async function poll(tracker, taildb, history) {
   tracker.save();
   history.prune(now);
 
-  if (skipped.length) {
-    log(`  (unsteady) ${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? ` +${skipped.length - 5}` : ''}`);
+  if (watching.length) {
+    log(
+      `  (watching) ${watching.slice(0, 5).join(', ')}` +
+        `${watching.length > 5 ? ` +${watching.length - 5}` : ''}`,
+    );
   }
 
   log(
@@ -182,7 +191,8 @@ async function main() {
     log(
       `Overhead: ${o.horizonDeg}° horizon, within ${o.maxGroundNm}nm ground` +
         `${o.cylinderNm > 0 ? `, plus a ${o.cylinderNm}nm cylinder` : ''}` +
-        ` (${o.maxSlantNm}nm max slant), ${o.lookaheadMinutes}min lookahead,` +
+        ` (${o.maxSlantNm}nm max slant), ${o.lookaheadMinutes}min lookahead` +
+        ` but alerting inside T-${duration(o.alertWithinSec)},` +
         ` scope=${o.scope}${o.only ? ', predicted passes only' : ''}.`,
     );
     if (o.requireStraight) {

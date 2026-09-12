@@ -257,6 +257,36 @@ tests flags directly rather than going through the distance-gated `classify()`.
 Config validation rejects a search radius too small for the lookahead window,
 since that makes aircraft materialise already on top of you.
 
+### Watching early, alerting late
+
+A wide search radius is not what produces false alarms — the **lookahead** is.
+An aircraft 60 nm out at 450 kt covers only 45 nm in a six-minute window, so it
+never reaches the bubble inside the scan and is silently discarded. What does
+misfire is a projection that has to reach a long way, because it is a claim
+that the aircraft holds its present course:
+
+| Projection reaches | Distance at 450 kt | Heading it must hold to still cross a 3 nm bubble |
+| --- | --- | --- |
+| 6 min | 45 nm | ±3.8° |
+| 3 min | 23 nm | ±7.7° |
+| 2 min | 15 nm | ±11.5° |
+| 1.5 min | 11 nm | ±15.5° |
+
+Traffic turning onto an approach breaks ±3.8° as a matter of routine and
+±11.5° rarely, because by two minutes out it has usually already turned. The
+straightness gate cannot help here: it proves the track has *been* straight,
+never that it will *stay* straight.
+
+So the two are separated. Prediction still runs out to the full lookahead and
+the log shows what is coming (`(watching) DAL123 (T-4m12s)`), but a push waits
+until the ETA falls inside `OVERHEAD_ALERT_WITHIN_SEC`. Raising it buys warning
+and costs precision; lowering it does the reverse, down to `POLL_SECONDS`,
+below which a pass can fall between two polls and never be seen at all.
+
+`insideBubble` is exempt. That is an observation rather than a prediction, so
+it has no shelf life — a helicopter hovering over your house alerts whatever
+its ETA, of which it has none.
+
 **How selective is it?** A live run over one sky: 109 aircraft within 60 nm,
 **2** whose tracks actually crossed the cone.
 
@@ -493,6 +523,7 @@ Everything lives in `.env`. Blank means "no limit" for the numeric gates.
 | `OVERHEAD_CYLINDER_NM` | `1` | Everything within this distance horizontally counts, whatever its elevation. Catches low traffic the treeline hides. `0` disables. |
 | `OVERHEAD_MAX_SLANT_NM` | `25` | Beyond this it is an unresolvable dot. Rarely the binding constraint. |
 | `OVERHEAD_LOOKAHEAD_MIN` | `6` | How far ahead to project. More warning, less accuracy. |
+| `OVERHEAD_ALERT_WITHIN_SEC` | `180` | How near a predicted pass must be to earn a push. Watching still starts at the full lookahead; only the notification waits. |
 | `OVERHEAD_STEP_SECONDS` | `5` | Simulation resolution. |
 | `OVERHEAD_MIN_SPEED_KT` | `40` | Ignore hovering or taxiing aircraft, which cannot be dead-reckoned. |
 | `OVERHEAD_SEARCH_NM` | `60` | Fetch radius. Must cover `~500kt × lookahead`, and validation enforces it. |

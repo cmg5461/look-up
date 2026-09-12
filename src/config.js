@@ -107,6 +107,16 @@ export const config = {
     stepSeconds: num('OVERHEAD_STEP_SECONDS', 5),
     minSpeedKt: num('OVERHEAD_MIN_SPEED_KT', 40),
 
+    // How near a predicted pass must be before it is worth a notification.
+    // A projection is a claim that the aircraft holds its present course, and
+    // that claim decays with the distance it has to reach: at six minutes a
+    // 450kt jet must hold heading to within 3.8 degrees to still cross a 3nm
+    // bubble, while at two minutes it has 11.5 degrees of slack. Aircraft
+    // turning onto an approach break the first tolerance routinely and the
+    // second rarely, because by then they have usually already turned.
+    // Watching still begins at the full lookahead; only the push waits.
+    alertWithinSec: num('OVERHEAD_ALERT_WITHIN_SEC', 180),
+
     // Extrapolating a turning or decelerating aircraft produces a confident
     // wrong answer, so fit its recent positions and check the fit first.
     requireStraight: bool('OVERHEAD_REQUIRE_STRAIGHT', true),
@@ -175,6 +185,14 @@ export function validate(cfg = config) {
       }
     }
     if (o.maxSlantNm <= 0) problems.push('OVERHEAD_MAX_SLANT_NM must be positive.');
+    // Below one poll there is no guarantee any poll ever catches the window,
+    // so the aircraft would pass in silence.
+    if (o.alertWithinSec < cfg.pollSeconds) {
+      problems.push(
+        `OVERHEAD_ALERT_WITHIN_SEC (${o.alertWithinSec}) is under POLL_SECONDS ` +
+          `(${cfg.pollSeconds}), so a pass could slip between two polls unseen.`,
+      );
+    }
     if (o.stepSeconds <= 0) problems.push('OVERHEAD_STEP_SECONDS must be positive.');
     if (!['flagged', 'all'].includes(o.scope)) {
       problems.push(`OVERHEAD_SCOPE must be "flagged" or "all", got "${o.scope}".`);

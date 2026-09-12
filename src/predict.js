@@ -220,3 +220,23 @@ export function predictOverhead(a, cfg, fit = null) {
   if (!now.insideBubble && !projected && !held) return null;
   return { now, projected, held };
 }
+
+/**
+ * Whether a result is near enough to be worth a notification.
+ *
+ * Two different kinds of claim live in one result, and they deserve different
+ * standards of proof. `now.insideBubble` is an observation - the aircraft is
+ * above you, and no amount of future manoeuvring changes that. `projected` is
+ * a prediction that it holds its present course, and that prediction weakens
+ * with the distance it must reach across: at six minutes a 450kt jet has to
+ * hold heading to within 3.8 degrees to still cross a 3nm bubble, at two
+ * minutes it has 11.5 degrees of slack. Aircraft turning onto an approach
+ * routinely break the first tolerance and rarely the second, because by two
+ * minutes out they have usually already turned.
+ *
+ * So watching begins as soon as a crossing is predictable; only the alert
+ * waits for the claim to get short enough to be nearly a statement of fact.
+ */
+export const alertable = (o, cfg) =>
+  o.now.insideBubble ||
+  (o.projected != null && o.projected.etaSec <= cfg.overhead.alertWithinSec);

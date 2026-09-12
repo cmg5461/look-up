@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { config, aircraftAt, perfectFit } from './fixture.js';
-import { bubbleRadiusNm, predictOverhead } from '../src/predict.js';
+import { bubbleRadiusNm, predictOverhead, alertable } from '../src/predict.js';
 import { FT_PER_NM } from '../src/geo.js';
 
 /** What this aircraft means, in one word, for readable assertions. */
@@ -148,4 +148,30 @@ test('held is only reported for aircraft that would otherwise have crossed', () 
 test('aircraft without a position are ignored', () => {
   assert.equal(predictOverhead({ lat: null, lon: null, altFt: 1000 }, config, null), null);
   assert.equal(predictOverhead({ lat: 40, lon: -73, altFt: null }, config, null), null);
+});
+
+test('a projection further out than the alert window is watched, not alerted', () => {
+  // 40nm at 450kt is about 5 minutes away - far enough that holding heading
+  // to within 4 degrees is an assumption, not an observation.
+  const far = aircraftAt({ bearing: 225, distanceNm: 40, track: 45, altFt: 30000, speedKt: 450 });
+  const r = predictOverhead(far, config, perfectFit(far));
+  assert.ok(r.projected, 'the crossing is still predicted');
+  assert.ok(r.projected.etaSec > config.overhead.alertWithinSec, 'and it is beyond the window');
+  assert.equal(alertable(r, config), false, 'but it does not earn a push yet');
+});
+
+test('the same aircraft becomes alertable once it is close enough', () => {
+  const near = aircraftAt({ bearing: 225, distanceNm: 10, track: 45, altFt: 30000, speedKt: 450 });
+  const r = predictOverhead(near, config, perfectFit(near));
+  assert.ok(r.projected.etaSec <= config.overhead.alertWithinSec);
+  assert.equal(alertable(r, config), true);
+});
+
+test('the alert window never gates something already overhead', () => {
+  // An observation is not a prediction, so it is not subject to a prediction's
+  // shelf life. A hovering helicopter has no ETA at all and must still alert.
+  const a = aircraftAt({ bearing: 180, distanceNm: 0.1, altFt: 800, speedKt: 0, track: null });
+  const r = predictOverhead(a, config, null);
+  assert.equal(r.projected, null, 'nothing extrapolated');
+  assert.equal(alertable(r, config), true, 'and it alerts anyway');
 });
