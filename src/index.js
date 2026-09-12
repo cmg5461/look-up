@@ -106,7 +106,8 @@ async function main() {
   const problems = validate();
   if (problems.length) {
     console.error('Configuration problems:\n' + problems.map((p) => `  - ${p}`).join('\n'));
-    console.error('\nCopy .env.example to .env and fill it in. See README.md.');
+    console.error('\nRun `npm run init` to create .env, then fill it in.');
+    console.error('See docs/setup.md for a step-by-step walkthrough.');
     process.exit(1);
   }
 

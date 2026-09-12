@@ -22,6 +22,9 @@ https://globe.adsb.fi/?icao=af3fa3
 
 No API keys, no accounts, no dependencies. About 1,000 lines of plain Node.
 
+**New here? Start with the [setup guide](docs/setup.md)** — a step-by-step
+walkthrough from nothing to a running alerter. This page is the reference.
+
 ---
 
 ## Contents
@@ -68,6 +71,9 @@ npm start            # the real thing
 ```
 
 There is no `npm install` step. There are no dependencies.
+
+Stuck on any of it? The [setup guide](docs/setup.md) covers each step in detail,
+plus troubleshooting.
 
 ### Secrets
 
