@@ -195,37 +195,51 @@ aircraft, so a military jet with a blank callsign is one alert, not two.
 <br>
 
 Being *near* you and being *visible* are different things, and the gap is
-mostly vertical. The volume you can genuinely pick an aircraft out of is the
-intersection of two constraints:
+mostly vertical. Three separate constraints bound the sky you can actually see,
+and each binds at a different altitude:
 
-- **A cone**, from `elevation >= OVERHEAD_MIN_ELEVATION_DEG`. Below that an
-  aircraft is low on the horizon, behind trees and rooftops.
-- **A sphere**, from `slant range <= OVERHEAD_MAX_SLANT_NM`. Past that it is a
-  dot you will not resolve however high it sits.
+| | Constraint | Binds for |
+|---|---|---|
+| 1 | **Your horizon** — `elevation >= OVERHEAD_HORIZON_DEG`. Trees, roofs and terrain cut off the bottom of your sky. | **Low** aircraft |
+| 2 | **"Overhead"** — `ground distance <= OVERHEAD_MAX_GROUND_NM`. However high it is, far away horizontally is not overhead. | **High** aircraft |
+| 3 | **Resolvability** — `slant <= OVERHEAD_MAX_SLANT_NM`. Past that it is a dot. | Extremes only |
 
-At a given altitude the cone contributes a ground radius of
-`alt / tan(elevation)` and the sphere `sqrt(maxSlant² - alt²)`; whichever is
-smaller wins. **At 45° the cone radius reduces to exactly the altitude**, which
-makes it easy to reason about:
+The horizon angle is **not a preference** — it is a fact about where you stand.
+Roughly 5–15° in wooded suburbia, near 0° over open water, more in a valley.
 
-| Aircraft altitude | "Overhead" means within |
-|---|---|
-| 40,000 ft | 6.6 nm |
-| 30,000 ft | 4.9 nm |
-| 10,000 ft | 1.6 nm |
-| 3,000 ft | 0.5 nm |
-| 1,000 ft | 0.16 nm |
+A single elevation cone cannot do this job, and the first version of this
+feature tried. At 45° a helicopter at 400 ft had to be within **0.066 nm — 133
+yards** — while a jet at 30,000 ft got a 4.9 nm window. That is exactly
+backwards: the low, close, loud aircraft is the one you are most likely to
+notice, and it was the one being excluded.
 
-A helicopter at 1,000 ft has to be nearly on top of you; a cruising jet gets a
-5 nm window. That is not a quirk, it is what "directly overhead" means.
+Splitting the floor from the preference fixes both ends:
+
+| Altitude | Old 45° cone | Horizon 10° + 3 nm cap | |
+|---|---|---|---|
+| 400 ft | 0.07 nm | **0.37 nm** | 5.7× wider |
+| 1,000 ft | 0.16 nm | **0.93 nm** | 5.7× wider |
+| 3,000 ft | 0.49 nm | **2.80 nm** | 5.7× wider |
+| 10,000 ft | 1.65 nm | **3.00 nm** | 1.8× wider |
+| 30,000 ft | 4.94 nm | **3.00 nm** | stricter |
+| 40,000 ft | 6.58 nm | **3.00 nm** | stricter |
+
+Low traffic gets caught; high traffic has to be more genuinely overhead.
 
 [`predict.js`](src/predict.js) then dead-reckons each aircraft along its
 current **ground track** (not heading) at its current speed and vertical rate,
-stepping forward `OVERHEAD_STEP_SECONDS` at a time out to
-`OVERHEAD_LOOKAHEAD_MIN`. Stepping rather than solving closed-form is
+out to `OVERHEAD_LOOKAHEAD_MIN`. Stepping rather than solving closed-form is
 deliberate: the bubble's radius changes with altitude, so a climbing or
 descending aircraft chases a moving target and there is no clean analytic
-answer. A few hundred steps per aircraft costs nothing.
+answer.
+
+It runs **two passes**. A coarse one finds the crossing, with its step shrunk
+adaptively — at 500 kt and 400 ft the whole crossing lasts 5 seconds, which a
+fixed 5-second step would skip clean over. A fine pass then re-walks just that
+window to pin down peak elevation and closest approach; without it, a
+helicopter passing directly overhead reported its peak as 50° rather than 90°,
+which would send you looking at the wrong patch of sky. The full test suite
+runs in 3 ms.
 
 Because approaching traffic is *far away* when it matters, prediction fetches a
 much wider radius (`OVERHEAD_SEARCH_NM`, default 60) than the alert radius, and
@@ -381,8 +395,9 @@ Everything lives in `.env`. Blank means "no limit" for the numeric gates.
 | `OVERHEAD` | `true` | Enable dead-reckoning prediction. |
 | `OVERHEAD_ONLY` | `true` | Alert *only* on predicted passes, suppressing plain in-radius alerts for aircraft that will never come overhead. |
 | `OVERHEAD_SCOPE` | `flagged` | `flagged` projects only aircraft that trip a rule; `all` projects everything, airliners included. |
-| `OVERHEAD_MIN_ELEVATION_DEG` | `45` | Cone half-angle above the horizon. At 45° the ground radius equals the altitude. |
-| `OVERHEAD_MAX_SLANT_NM` | `25` | Beyond this you will not pick it out however high it is. |
+| `OVERHEAD_HORIZON_DEG` | `10` | Your treeline, in degrees above level. A fact about your location, not a taste setting. Decides whether you catch low traffic. |
+| `OVERHEAD_MAX_GROUND_NM` | `3` | How far horizontally still counts as overhead. Decides how strict "overhead" is for high traffic. |
+| `OVERHEAD_MAX_SLANT_NM` | `25` | Beyond this it is an unresolvable dot. Rarely the binding constraint. |
 | `OVERHEAD_LOOKAHEAD_MIN` | `6` | How far ahead to project. More warning, less accuracy. |
 | `OVERHEAD_STEP_SECONDS` | `5` | Simulation resolution. |
 | `OVERHEAD_MIN_SPEED_KT` | `40` | Ignore hovering or taxiing aircraft, which cannot be dead-reckoned. |

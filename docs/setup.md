@@ -231,21 +231,37 @@ aircraft forward and alerts only when its track will carry it through the patch
 of sky you can genuinely see. Something interesting that stays 8 nm to your
 north never pings you, because you would never spot it.
 
-The knob that matters is the cone angle:
+The knob that matters most is your **horizon angle** — how far above level
+your treeline, rooftops or terrain actually sit:
 
 ```ini
-OVERHEAD_MIN_ELEVATION_DEG=45
+OVERHEAD_HORIZON_DEG=10
 ```
 
-At 45° the ground radius of "overhead" equals the aircraft's altitude — a jet
-at 30,000 ft counts within 4.9 nm, a helicopter at 1,000 ft within 0.16 nm.
+This is not a preference, it is a fact about where you stand. Go outside, look
+at the lowest bit of sky you can actually see, and estimate. Roughly 5–15° in
+wooded suburbia, near 0° over open water, more in a valley or a city street.
 
-| Setting | Effect |
+It is what decides whether you catch low traffic. A helicopter at 400 ft:
+
+| Your horizon | You see it out to |
 |---|---|
-| `60` | Nearly straight up. Very few alerts. |
-| `45` | Default. Unmistakably overhead. |
-| `30` | High in the sky but off to one side. Roughly 2× the ground radius. |
-| `20` | Generous. You will get things you have to hunt for. |
+| 5° | 0.75 nm |
+| 10° | 0.37 nm |
+| 15° | 0.25 nm |
+
+The second knob decides how strict "overhead" is for **high** traffic, where
+the horizon angle alone would sweep in half the county:
+
+```ini
+OVERHEAD_MAX_GROUND_NM=3
+```
+
+| Setting | A jet at 30,000 ft counts when |
+|---|---|
+| `1.5` | within 1.5 nm — nearly straight up (73°) |
+| `3` | within 3 nm — default, clearly overhead (59°) |
+| `6` | within 6 nm — high in the sky but off to one side (39°) |
 
 To get more warning, raise the lookahead — but raise the search radius with it,
 or the app rejects the config:

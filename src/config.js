@@ -91,7 +91,12 @@ export const config = {
     // 'flagged' projects only aircraft that trip a rule (military, PIA, ...);
     // 'all' projects every aircraft, which means every airliner too.
     scope: str('OVERHEAD_SCOPE', 'flagged').toLowerCase(),
-    minElevationDeg: num('OVERHEAD_MIN_ELEVATION_DEG', 45),
+    // Your local horizon: how far above level the treeline, rooftops or
+    // terrain sit. Below this you see nothing, whatever the geometry says.
+    horizonDeg: num('OVERHEAD_HORIZON_DEG', 10),
+    // How far away horizontally still counts as "overhead". Binds for high
+    // aircraft, where the horizon angle alone would sweep in half the county.
+    maxGroundNm: num('OVERHEAD_MAX_GROUND_NM', 3),
     maxSlantNm: num('OVERHEAD_MAX_SLANT_NM', 25),
     lookaheadMinutes: num('OVERHEAD_LOOKAHEAD_MIN', 6),
     stepSeconds: num('OVERHEAD_STEP_SECONDS', 5),
@@ -132,9 +137,10 @@ export function validate(cfg = config) {
   }
   const o = cfg.overhead;
   if (o.enabled) {
-    if (o.minElevationDeg <= 0 || o.minElevationDeg >= 90) {
-      problems.push('OVERHEAD_MIN_ELEVATION_DEG must be between 1 and 89 (90 is straight up).');
+    if (o.horizonDeg < 0 || o.horizonDeg >= 90) {
+      problems.push('OVERHEAD_HORIZON_DEG must be between 0 and 89 (it is your treeline, not a preference).');
     }
+    if (o.maxGroundNm <= 0) problems.push('OVERHEAD_MAX_GROUND_NM must be positive.');
     if (o.maxSlantNm <= 0) problems.push('OVERHEAD_MAX_SLANT_NM must be positive.');
     if (o.stepSeconds <= 0) problems.push('OVERHEAD_STEP_SECONDS must be positive.');
     if (!['flagged', 'all'].includes(o.scope)) {

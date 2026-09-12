@@ -164,9 +164,9 @@ async function main() {
   if (config.overhead.enabled) {
     const o = config.overhead;
     log(
-      `Overhead prediction: ${o.minElevationDeg}° cone, ${o.maxSlantNm}nm max slant,` +
-        ` ${o.lookaheadMinutes}min lookahead, scope=${o.scope}` +
-        `${o.only ? ', predicted passes only' : ''}.`,
+      `Overhead: ${o.horizonDeg}° horizon, within ${o.maxGroundNm}nm ground` +
+        ` (${o.maxSlantNm}nm max slant), ${o.lookaheadMinutes}min lookahead,` +
+        ` scope=${o.scope}${o.only ? ', predicted passes only' : ''}.`,
     );
   }
   if (!taildb) log('No local tail database - relying on feed enrichment only.');
