@@ -203,6 +203,16 @@ and each binds at a different altitude:
 | 1 | **Your horizon** — `elevation >= OVERHEAD_HORIZON_DEG`. Trees, roofs and terrain cut off the bottom of your sky. | **Low** aircraft |
 | 2 | **"Overhead"** — `ground distance <= OVERHEAD_MAX_GROUND_NM`. However high it is, far away horizontally is not overhead. | **High** aircraft |
 | 3 | **Resolvability** — `slant <= OVERHEAD_MAX_SLANT_NM`. Past that it is a dot. | Extremes only |
+| 4 | **A cylinder**, unioned on — `ground <= OVERHEAD_CYLINDER_NM`, whatever the elevation. | **Very low** aircraft |
+
+The cylinder exists because the cone is right about your eyes and wrong about
+your ears. A helicopter at 400 ft beyond 0.37 nm *is* behind your treeline —
+and it is still low, close and loud, and may well show through a gap. At 1 nm
+the cylinder only reaches below **1,070 ft**, where the cone is narrower than
+it is; above that the cone is already wider and the cylinder changes nothing.
+It covers 0.028% of the 60 nm search area, so it cannot meaningfully add noise.
+Alerts that qualify only via the cylinder say so: *"stays below your treeline —
+close enough to hear, probably not to see."*
 
 The horizon angle is **not a preference** — it is a fact about where you stand.
 Roughly 5–15° in wooded suburbia, near 0° over open water, more in a valley.
@@ -397,6 +407,7 @@ Everything lives in `.env`. Blank means "no limit" for the numeric gates.
 | `OVERHEAD_SCOPE` | `flagged` | `flagged` projects only aircraft that trip a rule; `all` projects everything, airliners included. |
 | `OVERHEAD_HORIZON_DEG` | `10` | Your treeline, in degrees above level. A fact about your location, not a taste setting. Decides whether you catch low traffic. |
 | `OVERHEAD_MAX_GROUND_NM` | `3` | How far horizontally still counts as overhead. Decides how strict "overhead" is for high traffic. |
+| `OVERHEAD_CYLINDER_NM` | `1` | Everything within this distance horizontally counts, whatever its elevation. Catches low traffic the treeline hides. `0` disables. |
 | `OVERHEAD_MAX_SLANT_NM` | `25` | Beyond this it is an unresolvable dot. Rarely the binding constraint. |
 | `OVERHEAD_LOOKAHEAD_MIN` | `6` | How far ahead to project. More warning, less accuracy. |
 | `OVERHEAD_STEP_SECONDS` | `5` | Simulation resolution. |

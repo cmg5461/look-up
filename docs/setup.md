@@ -263,6 +263,17 @@ OVERHEAD_MAX_GROUND_NM=3
 | `3` | within 3 nm — default, clearly overhead (59°) |
 | `6` | within 6 nm — high in the sky but off to one side (39°) |
 
+And a cylinder, for things too low to clear your treeline at all:
+
+```ini
+OVERHEAD_CYLINDER_NM=1
+```
+
+Anything within this distance horizontally counts whatever its elevation. At
+1 nm it only reaches below about 1,070 ft — helicopters, pattern traffic, low
+passes. Those alerts tell you they stay below your treeline, so you know to
+listen rather than look. Set `0` to turn it off.
+
 To get more warning, raise the lookahead — but raise the search radius with it,
 or the app rejects the config:
 

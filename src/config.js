@@ -97,6 +97,11 @@ export const config = {
     // How far away horizontally still counts as "overhead". Binds for high
     // aircraft, where the horizon angle alone would sweep in half the county.
     maxGroundNm: num('OVERHEAD_MAX_GROUND_NM', 3),
+    // A cylinder unioned onto the cone: anything this close horizontally
+    // counts whatever its elevation. Catches low traffic that the treeline
+    // would otherwise hide - it only reaches below the altitude where the
+    // cone is narrower than this, about 1,070ft at 10 degrees and 1nm.
+    cylinderNm: num('OVERHEAD_CYLINDER_NM', 1),
     maxSlantNm: num('OVERHEAD_MAX_SLANT_NM', 25),
     lookaheadMinutes: num('OVERHEAD_LOOKAHEAD_MIN', 6),
     stepSeconds: num('OVERHEAD_STEP_SECONDS', 5),
@@ -141,6 +146,7 @@ export function validate(cfg = config) {
       problems.push('OVERHEAD_HORIZON_DEG must be between 0 and 89 (it is your treeline, not a preference).');
     }
     if (o.maxGroundNm <= 0) problems.push('OVERHEAD_MAX_GROUND_NM must be positive.');
+    if (o.cylinderNm < 0) problems.push('OVERHEAD_CYLINDER_NM cannot be negative (0 disables it).');
     if (o.maxSlantNm <= 0) problems.push('OVERHEAD_MAX_SLANT_NM must be positive.');
     if (o.stepSeconds <= 0) problems.push('OVERHEAD_STEP_SECONDS must be positive.');
     if (!['flagged', 'all'].includes(o.scope)) {

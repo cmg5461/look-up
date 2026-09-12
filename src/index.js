@@ -165,6 +165,7 @@ async function main() {
     const o = config.overhead;
     log(
       `Overhead: ${o.horizonDeg}° horizon, within ${o.maxGroundNm}nm ground` +
+        `${o.cylinderNm > 0 ? `, plus a ${o.cylinderNm}nm cylinder` : ''}` +
         ` (${o.maxSlantNm}nm max slant), ${o.lookaheadMinutes}min lookahead,` +
         ` scope=${o.scope}${o.only ? ', predicted passes only' : ''}.`,
     );

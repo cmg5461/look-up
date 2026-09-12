@@ -51,6 +51,11 @@ function predictionLines(a) {
       : `Enters your sky from the ${p.entryCompass} in ${duration(p.etaSec)}, ` +
         `overhead for about ${duration(p.durationSec)}.`,
   );
+  if (p.belowHorizon) {
+    lines.push(
+      'Stays below your treeline - close enough to hear, probably not to see.',
+    );
+  }
   lines.push(
     `Peak ${round(p.peakElevationDeg)}° up` +
       `${p.alreadyInside ? '' : ` at ${duration(p.peakSec)}`}` +

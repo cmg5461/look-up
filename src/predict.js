@@ -23,6 +23,15 @@ const toDeg = (r) => (r * 180) / Math.PI;
  *                      This binds for HIGH aircraft.
  *   3. Resolvability.  slant range <= maxSlantNm. Past that it is a dot.
  *
+ * Plus a cylinder, unioned in: anything within cylinderNm of you horizontally
+ * counts whatever its elevation. The cone alone says a helicopter at 400ft
+ * beyond 0.37nm is behind the treeline and therefore invisible, which is true
+ * of your eyes and irrelevant to your ears - it is still low, close and loud,
+ * and it may well show through a gap. The cylinder only reaches below the
+ * altitude where the cone is tighter than it is: at 10 degrees and 1nm, that
+ * is everything under about 1,070ft. Above that the cone is already wider and
+ * the cylinder changes nothing.
+ *
  * A single elevation cone cannot do this job. At 45 degrees a helicopter at
  * 400ft would have to be within 0.066nm - 133 yards - while a jet at 30,000ft
  * got a 4.9nm window. That is backwards: the low, loud, close aircraft is the
@@ -45,9 +54,10 @@ export function bubbleRadiusNm(altFt, cfg) {
   const altNm = altFt / FT_PER_NM;
   if (altNm >= o.maxSlantNm) return 0; // too high to resolve even straight up
 
-  const horizon = altNm / Math.tan(toRad(o.horizonDeg));
+  const cone = altNm / Math.tan(toRad(o.horizonDeg));
   const slant = Math.sqrt(o.maxSlantNm * o.maxSlantNm - altNm * altNm);
-  return Math.min(horizon, slant, o.maxGroundNm);
+  // Union with the cylinder, then cap by what you could resolve at all.
+  return Math.min(Math.max(Math.min(cone, o.maxGroundNm), o.cylinderNm), slant);
 }
 
 /** Where the aircraft sits relative to the observer at one instant. */
@@ -88,7 +98,9 @@ function scan(a, cfg, fromSec, toSec, stepSec) {
     const { ground, slant, elevation } = look(cfg, p.lat, p.lon, altFt);
 
     const inside =
-      elevation >= o.horizonDeg && ground <= o.maxGroundNm && slant <= o.maxSlantNm;
+      slant <= o.maxSlantNm &&
+      (ground <= o.cylinderNm ||
+        (elevation >= o.horizonDeg && ground <= o.maxGroundNm));
     if (inside) {
       if (entrySec === null) {
         entrySec = t;
@@ -169,6 +181,10 @@ export function predictOverhead(a, cfg) {
     entryBearing: fine.entryBearing,
     entryCompass: compass(fine.entryBearing),
     alreadyInside: fine.entrySec <= 0.5,
+    // It only qualified via the cylinder: close, but never clearing your
+    // treeline. Worth saying plainly rather than sending you to stare at a
+    // patch of sky with a hedge in front of it.
+    belowHorizon: fine.peakElevation < o.horizonDeg,
     // Dead reckoning assumes the aircraft holds its current track. That is a
     // decent bet for a jet in cruise and a poor one for something in the
     // circuit, so callers should present distant predictions as provisional.
